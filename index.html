@@ -1,0 +1,2723 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>FlowSketch</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FlowSketch">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<!--
+  WINDKANAL – interaktiver 2D-Windkanal (Lattice-Boltzmann auf der GPU)
+  Eine einzige, eigenständige HTML-Datei ohne externe Abhängigkeiten.
+
+  Gliederung des Skripts (Suche nach "=====" springt von Abschnitt zu Abschnitt):
+    1  HILFETEXTE      zentrale Tabelle aller "?"-Texte
+    2  GRUNDLAGEN      Konstanten, Zustand (APP / DOK / ST / SIM), Hilfsfunktionen
+    3  WEBGL           Kontext, Shader-Quelltexte, Programme, Texturen
+    4  LÖSER           D2Q9-Lattice-Boltzmann, Maske, Kräfte
+    5  DARSTELLUNG     Partikel, Rauch, Druck, Geschwindigkeit
+    6  ANSICHT         Pan/Zoom, Vektor-Overlay, Lineale
+    7  OBJEKTE         Geometrie, Rückgängig, Werkzeuge, Lasso
+    8  EINGABE         Pencil, Finger, Maus
+    9  OBERFLÄCHE      Leiste, Panels, HUD, Hilfe, Umschaltknopf
+   10  DOKUMENTE       IndexedDB, Startseite, Export/Import
+   11  HAUPTSCHLEIFE   Zeitschritt-Steuerung, Start
+-->
+<style>
+/* ---------- Grundgerüst ---------- */
+:root{
+  --glas:rgba(13,17,21,.82); --rand:rgba(255,255,255,.10); --text:#dbe6ea; --matt:#8496a1;
+  --akz:#35e0d0; --akz2:#8dffb5; --warn:#ffb454; --feld:rgba(255,255,255,.07);
+  --so:env(safe-area-inset-top,0px); --sr:env(safe-area-inset-right,0px);
+  --su:env(safe-area-inset-bottom,0px); --sl:env(safe-area-inset-left,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:var(--text);overflow:hidden;
+  font:15px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+  touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:none}
+canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block;touch-action:none}
+#ov{cursor:crosshair}
+#sonde{position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;
+  padding:var(--so) var(--sr) var(--su) var(--sl)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;touch-action:manipulation}
+input,select{font:inherit;color:inherit}
+.glas{background:var(--glas);border:1px solid var(--rand);border-radius:14px;
+  -webkit-backdrop-filter:blur(14px) saturate(140%);backdrop-filter:blur(14px) saturate(140%)}
+.zahl{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+[hidden]{display:none!important}
+
+/* ---------- Werkzeugleiste ---------- */
+#leiste{position:fixed;top:calc(var(--so) + 8px);left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:2px;padding:4px;z-index:20}
+#leiste .tr{width:1px;height:26px;background:var(--rand);margin:0 4px}
+.kn{width:46px;height:46px;border-radius:11px;display:grid;place-items:center;color:#b9c7ce}
+.kn svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.kn.an{background:rgba(53,224,208,.16);color:var(--akz)}
+.kn:active{background:rgba(255,255,255,.12)}
+.kn:disabled{opacity:.3}
+
+/* ---------- Aufklapp-Menüs (2. Ebene) ---------- */
+.pop{position:fixed;z-index:30;padding:12px;min-width:250px;max-width:330px}
+.pop h4{margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--matt)}
+.liste button.eintrag{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 10px;border-radius:9px;text-align:left}
+.liste button.eintrag.an{background:rgba(53,224,208,.14);color:var(--akz)}
+.liste button.eintrag:active{background:rgba(255,255,255,.1)}
+.liste .zl{display:flex;align-items:center;gap:4px}
+.liste .zl>.eintrag{flex:1}
+
+/* ---------- Formularzeilen (Panels und Menüs) ---------- */
+.zeile{display:flex;align-items:center;gap:8px;min-height:44px;margin:2px 0}
+.zeile>label,.zeile>.lb{flex:0 0 auto;color:var(--text)}
+.zeile>.wert{margin-left:auto;color:var(--akz);font-size:14px}
+.zeile.block{flex-wrap:wrap}
+.zeile.block>.voll{flex:1 0 100%}
+.fuell{flex:1}
+.seg{display:flex;background:var(--feld);border-radius:9px;padding:2px;gap:2px;flex:1 0 100%}
+.seg button{flex:1;min-height:36px;border-radius:7px;font-size:14px;color:#b9c7ce;padding:0 6px}
+.seg button.an{background:rgba(53,224,208,.2);color:var(--akz)}
+input[type=range]{-webkit-appearance:none;appearance:none;flex:1 0 100%;width:100%;height:32px;background:none;margin:0;touch-action:none}
+input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:rgba(255,255,255,.16)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:26px;height:26px;border-radius:50%;margin-top:-10.5px;
+  background:#e9f3f5;border:0;box-shadow:0 1px 5px rgba(0,0,0,.6)}
+input[type=range]::-moz-range-track{height:5px;border-radius:3px;background:rgba(255,255,255,.16)}
+input[type=range]::-moz-range-thumb{width:26px;height:26px;border-radius:50%;background:#e9f3f5;border:0}
+input[type=number],input[type=text],select{background:var(--feld);border:1px solid var(--rand);border-radius:8px;
+  height:38px;padding:0 9px;min-width:0;width:92px;-webkit-user-select:text;user-select:text}
+input[type=text]{width:100%}
+select{width:auto;-webkit-appearance:none;appearance:none;padding-right:22px;
+  background-image:linear-gradient(45deg,transparent 50%,#9ab 50%),linear-gradient(135deg,#9ab 50%,transparent 50%);
+  background-position:calc(100% - 12px) 16px,calc(100% - 7px) 16px;background-size:5px 5px;background-repeat:no-repeat}
+.schalter{position:relative;width:50px;height:30px;flex:0 0 auto;margin-left:auto}
+.schalter input{position:absolute;inset:0;opacity:0;margin:0;width:100%;height:100%;cursor:pointer}
+.schalter i{position:absolute;inset:0;border-radius:15px;background:rgba(255,255,255,.16);transition:background .15s;pointer-events:none}
+.schalter i::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#e9f3f5;transition:transform .15s}
+.schalter input:checked+i{background:var(--akz)}
+.schalter input:checked+i::after{transform:translateX(20px)}
+.taste{min-height:40px;padding:0 14px;border-radius:9px;background:var(--feld);border:1px solid var(--rand)}
+.taste:active{background:rgba(255,255,255,.16)}
+.taste.haupt{background:rgba(53,224,208,.2);border-color:rgba(53,224,208,.4);color:var(--akz)}
+.klein{font-size:12.5px;color:var(--matt);line-height:1.4}
+
+/* ---------- Hilfe ("?") ---------- */
+.hq{flex:0 0 auto;width:20px;height:20px;border-radius:50%;border:1px solid rgba(255,255,255,.22);color:var(--matt);
+  font-size:12px;line-height:18px;text-align:center;position:relative}
+.hq::after{content:"";position:absolute;inset:-11px}          /* größere Trefferfläche */
+.hq.an{border-color:var(--akz);color:var(--akz)}
+body.ohne-hilfe .hq{display:none}
+#hilfe{position:fixed;z-index:95;max-width:300px;padding:11px 13px;font-size:14px;line-height:1.45;pointer-events:none}
+#hilfe b{display:block;color:var(--akz);margin-bottom:3px;font-weight:600}
+
+/* ---------- HUD ---------- */
+#hud{position:fixed;left:calc(var(--sl) + 40px);top:calc(var(--so) + 66px);z-index:15;padding:7px 11px;max-width:min(360px,calc(100vw - 60px))}
+#hud-kurz{display:flex;gap:14px;align-items:center;cursor:pointer}
+#hud-kurz .w{display:flex;gap:5px;align-items:baseline;white-space:nowrap}
+#hud-kurz .w span:first-child,#hud-lang td:first-child{color:var(--matt);font-size:12.5px}
+#hud-lang{margin-top:6px;border-top:1px solid var(--rand);padding-top:6px}
+#hud-lang table{border-collapse:collapse;width:100%}
+#hud-lang td{padding:2.5px 0;vertical-align:middle;white-space:nowrap}
+#hud-lang td:nth-child(2){text-align:right;padding-left:14px}
+#hud-lang td:nth-child(3){width:26px;text-align:right}
+#hud-lang tr.kopf td{color:var(--matt);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding-top:7px}
+#hud-hinweis{font-size:12px;color:var(--warn);margin-top:4px;display:flex;gap:6px;align-items:center;white-space:normal}
+
+/* ---------- Farbskala ---------- */
+#legende{position:fixed;right:calc(var(--sr) + 12px);bottom:calc(var(--su) + 40px);z-index:15;padding:8px 10px;width:210px;font-size:12px}
+#leg-kopf{display:flex;align-items:center;gap:6px;color:var(--matt);margin-bottom:5px}
+#leg-balken{height:9px;border-radius:5px}
+#leg-werte{display:flex;justify-content:space-between;margin-top:4px}
+
+/* ---------- Einstellungs-Panel ---------- */
+#panel{position:fixed;z-index:25;top:calc(var(--so) + 66px);right:calc(var(--sr) + 10px);bottom:calc(var(--su) + 40px);
+  width:330px;max-width:calc(100vw - 20px);display:flex;flex-direction:column;transition:transform .2s,opacity .2s}
+#panel.zu{transform:translateX(110%);opacity:0;pointer-events:none}
+#panel header{display:flex;align-items:center;gap:6px;padding:8px 8px 6px 10px;border-bottom:1px solid var(--rand)}
+#panel header .seg{flex:1}
+#panel .inhalt{overflow-y:auto;padding:8px 14px 16px;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1}
+details{margin-top:8px;border-top:1px solid var(--rand)}
+summary{list-style:none;min-height:46px;display:flex;align-items:center;gap:8px;color:var(--matt);
+  font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"›";font-size:18px;transition:transform .15s;display:inline-block}
+details[open] summary::before{transform:rotate(90deg)}
+
+/* ---------- Umschaltknopf, Cursor, Meldungen ---------- */
+#umschalter{position:fixed;z-index:22;width:62px;height:62px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(20,26,31,.86);border:1.5px solid rgba(255,255,255,.2);color:#cfe;touch-action:none;box-shadow:0 4px 18px rgba(0,0,0,.5)}
+#umschalter svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+#umschalter.rad{border-color:var(--akz);color:var(--akz)}
+#umschalter .hq{position:absolute;right:-6px;top:-6px;background:#11161a}
+#zeiger{position:fixed;left:0;top:0;z-index:10;pointer-events:none;border:1.2px solid rgba(255,255,255,.75);border-radius:50%;
+  box-shadow:0 0 0 1px rgba(0,0,0,.5);will-change:transform}
+#zeiger.rad{border-style:dashed;border-color:var(--warn)}
+#toast{position:fixed;left:50%;bottom:calc(var(--su) + 54px);transform:translateX(-50%);z-index:96;padding:9px 16px;font-size:14px;
+  pointer-events:none;transition:opacity .25s;max-width:80vw;text-align:center}
+#fehler{position:fixed;inset:0;z-index:99;background:#05070a;display:grid;place-items:center;padding:30px;text-align:center}
+#fehler div{max-width:520px}
+#fehler pre{white-space:pre-wrap;text-align:left;color:var(--warn);font-size:12px;-webkit-user-select:text;user-select:text}
+#fortschritt{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:65;padding:18px 22px;width:300px;text-align:center}
+#fortschritt .bahn{height:6px;border-radius:3px;background:rgba(255,255,255,.14);margin:12px 0;overflow:hidden}
+#fortschritt .bahn i{display:block;height:100%;width:0;background:var(--akz)}
+
+/* ---------- Lasso-Kontextleiste ---------- */
+#auswahl-leiste{position:fixed;z-index:18;display:flex;align-items:center;gap:2px;padding:4px;white-space:nowrap}
+#auswahl-leiste button{min-height:40px;padding:0 11px;border-radius:9px;font-size:14px}
+#auswahl-leiste button:active{background:rgba(255,255,255,.12)}
+#auswahl-leiste .tr{width:1px;height:24px;background:var(--rand);margin:0 3px}
+#auswahl-leiste input{width:68px;height:34px}
+
+/* ---------- Startseite ---------- */
+#start{position:fixed;inset:0;z-index:80;background:#05070a;overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;
+  padding:calc(var(--so) + 26px) calc(var(--sr) + 28px) calc(var(--su) + 30px) calc(var(--sl) + 28px)}
+#start header{display:flex;align-items:center;gap:10px;margin-bottom:22px;flex-wrap:wrap}
+#start h1{font-size:26px;font-weight:650;margin:0;letter-spacing:.01em}
+#start h1 small{display:block;font-size:13px;font-weight:400;color:var(--matt);letter-spacing:0;margin-top:2px}
+#kacheln{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+.kachel{position:relative;border:1px solid var(--rand);border-radius:14px;overflow:hidden;background:#0b0f13;cursor:pointer}
+.kachel:active{border-color:var(--akz)}
+.kachel .bild{aspect-ratio:16/10;background:#000 center/cover no-repeat;display:grid;place-items:center;color:var(--matt)}
+.kachel.neu .bild{font-size:44px;font-weight:200;color:var(--akz)}
+.kachel .fuss{display:flex;align-items:center;gap:6px;padding:9px 6px 9px 13px}
+.kachel .fuss div{flex:1;min-width:0}
+.kachel .fuss b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kachel .fuss span{font-size:12px;color:var(--matt)}
+#start-hinweis{color:var(--warn);font-size:13px;margin:0 0 16px}
+
+/* ---------- Dialoge ---------- */
+#dialog{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px}
+#dialog .karte{width:min(440px,100%);max-height:calc(100vh - 40px);overflow-y:auto;touch-action:pan-y;padding:18px 20px}
+#dialog h3{margin:0 0 10px;font-size:18px}
+#dialog .knoepfe{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+#dialog .vorschau{max-width:100%;border-radius:8px;border:1px solid var(--rand);-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto}
+#dialog textarea{width:100%;height:120px;background:var(--feld);border:1px solid var(--rand);border-radius:8px;color:inherit;font:12px ui-monospace,Menlo,monospace;-webkit-user-select:text;user-select:text}
+.kn.an2{color:var(--akz)}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="ov"></canvas>
+<div id="sonde"></div>
+<div id="zeiger" hidden></div>
+
+<!-- ================= Werkzeugleiste ================= -->
+<nav id="leiste" class="glas">
+  <button class="kn" id="kn-start" title="Startseite" hidden><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7M6 10v9h4v-5h4v5h4v-9"/></svg></button>
+  <span class="tr" id="tr-start" hidden></span>
+  <button class="kn" data-wz="frei" title="Freihand"><svg viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg></button>
+  <button class="kn" data-wz="form" title="Formen" hidden><svg viewBox="0 0 24 24"><rect x="3.5" y="10" width="10" height="10" rx="1"/><circle cx="15.5" cy="8.5" r="5"/></svg></button>
+  <button class="kn" data-wz="lasso" title="Lasso" hidden><svg viewBox="0 0 24 24"><ellipse cx="12" cy="10" rx="8" ry="5.5" stroke-dasharray="3 2.6"/><path d="M7 14.5c-1 2 0 4 2 5"/></svg></button>
+  <button class="kn" data-wz="radierer" title="Radierer"><svg viewBox="0 0 24 24"><path d="M9 19l-5-5L14 4l6 6-9 9z"/><path d="M8 10l6 6M9 19h11"/></svg></button>
+  <span class="tr"></span>
+  <button class="kn" id="kn-undo" title="Rückgängig"><svg viewBox="0 0 24 24"><path d="M8 5L4 9l4 4"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
+  <button class="kn" id="kn-redo" title="Wiederholen"><svg viewBox="0 0 24 24"><path d="M16 5l4 4-4 4"/><path d="M20 9H10a6 6 0 000 12h3"/></svg></button>
+  <span class="tr"></span>
+  <button class="kn" id="kn-dar" title="Darstellung"><svg viewBox="0 0 24 24"><path d="M3 8c3-3 6 3 9 0s6 3 9 0M3 13c3-3 6 3 9 0s6 3 9 0M3 18c3-3 6 3 9 0s6 3 9 0"/></svg></button>
+  <button class="kn" id="kn-zahn" title="Einstellungen"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.6" stroke-width="3.2" stroke-dasharray="2.98 2.99" stroke-linecap="butt"/><circle cx="12" cy="12" r="5.6"/><circle cx="12" cy="12" r="2.2"/></svg></button>
+  <button class="kn" id="kn-mehr" title="Mehr"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
+</nav>
+
+<!-- ================= Menüs der 2. Ebene ================= -->
+<div class="pop glas" id="pop-frei" hidden>
+  <h4>Freihand</h4>
+  <div class="zeile block"><span class="lb">Wandstärke</span><button class="hq" data-h="strich">?</button><span class="wert zahl" id="w-strich"></span>
+    <input type="range" id="r-strich" min="0" max="1" step="0.001"></div>
+</div>
+<div class="pop glas" id="pop-radierer" hidden>
+  <h4>Radierer</h4>
+  <div class="zeile block"><span class="lb">Modus</span><button class="hq" data-h="radierer">?</button>
+    <div class="seg" data-ziel="st.radModus"><button data-w="strich">Strich</button><button data-w="praezise">Präzise</button></div></div>
+  <div class="zeile block" id="z-radgr"><span class="lb">Größe</span><span class="wert zahl" id="w-rad"></span>
+    <input type="range" id="r-rad" min="0" max="1" step="0.001"></div>
+</div>
+<div class="pop glas" id="pop-lasso" hidden>
+  <h4>Lasso <button class="hq" data-h="lasso">?</button></h4>
+  <div class="zeile block"><span class="lb">Drehen rastet ein bei</span><button class="hq" data-h="einrasten">?</button>
+    <div class="seg" data-ziel="app.einrasten"><button data-w="1">1°</button><button data-w="5">5°</button></div></div>
+  <div class="zeile"><span class="lb">Frei skalieren</span><button class="hq" data-h="freiskal">?</button>
+    <label class="schalter"><input type="checkbox" data-ziel="app.freiSkal"><i></i></label></div>
+  <div class="zeile"><button class="taste fuell" id="kn-einfuegen">Einfügen</button></div>
+</div>
+<div class="pop glas" id="pop-form" hidden>
+  <h4>Formen <button class="hq" data-h="formen">?</button></h4>
+  <div class="seg" data-ziel="st.form"><button data-w="linie">Linie</button><button data-w="rechteck">Rechteck</button><button data-w="ellipse">Ellipse</button><button data-w="profil">Profil</button></div>
+  <div id="form-profil">
+    <div class="zeile block"><span class="lb">NACA-Profil</span><button class="hq" data-h="profil">?</button>
+      <div class="seg" id="seg-naca"><button data-n="0012">0012</button><button data-n="2412">2412</button><button data-n="4412">4412</button></div></div>
+    <div class="zeile"><span class="lb">Eigene Ziffern</span><span class="fuell"></span><input type="text" id="t-naca" class="zahl" inputmode="numeric" maxlength="4" placeholder="z. B. 6409" style="width:110px"></div>
+    <div class="zeile"><button class="taste fuell" id="kn-dat">.dat-Datei laden</button><button class="hq" data-h="dat">?</button></div>
+    <div class="zeile"><span class="lb">Sehnenlänge</span><span class="fuell"></span><input type="number" id="n-sehne" class="zahl" step="any" inputmode="decimal"><span class="klein" id="e-sehne"></span></div>
+    <div class="zeile"><span class="lb">Anstellwinkel</span><button class="hq" data-h="anstellwinkel">?</button><span class="fuell"></span><input type="number" id="n-aoa" class="zahl" step="0.5" inputmode="decimal"><span class="klein">°</span></div>
+    <p class="klein" id="profil-name" style="margin:4px 0 0"></p>
+  </div>
+</div>
+<input type="file" id="datei-dat" accept=".dat,.txt,text/plain" hidden>
+<input type="file" id="datei-json" accept=".json,application/json" hidden>
+<div id="auswahl-leiste" class="glas" hidden>
+  <button data-al="aus">Ausschneiden</button><button data-al="kop">Kopieren</button><button data-al="einf" id="al-einf">Einfügen</button><button data-al="dup">Duplizieren</button><button data-al="del" style="color:#ff8f8f">Löschen</button>
+  <span class="tr"></span><input type="number" id="n-winkel" class="zahl" step="1" inputmode="decimal" title="Drehwinkel"><span class="klein">°&nbsp;</span><button class="hq" data-h="drehwinkel">?</button>
+</div>
+<div class="pop glas" id="pop-dar" hidden>
+  <h4>Darstellung</h4>
+  <div class="liste" id="modus-liste">
+    <div class="zl"><button class="eintrag" data-modus="partikel">Partikel</button><button class="hq" data-h="m_partikel">?</button></div>
+    <div class="zl"><button class="eintrag" data-modus="rauch">Rauch</button><button class="hq" data-h="m_rauch">?</button></div>
+    <div class="zl"><button class="eintrag" data-modus="druck">Druckfeld</button><button class="hq" data-h="m_druck">?</button></div>
+    <div class="zl"><button class="eintrag" data-modus="tempo">Geschwindigkeit</button><button class="hq" data-h="m_tempo">?</button></div>
+  </div>
+  <div class="zeile block" id="z-anzeigetempo"><span class="lb">Anzeigegeschwindigkeit</span><button class="hq" data-h="anzeigetempo">?</button><span class="wert zahl" id="w-tempo"></span>
+    <input type="range" id="r-tempo" min="-1" max="1" step="0.01"></div>
+  <div class="zeile"><button class="taste fuell" id="kn-pause">Pause</button><button class="taste fuell" id="kn-reset">Strömung zurücksetzen</button></div>
+</div>
+<div class="pop glas" id="pop-mehr" hidden>
+  <div class="liste" id="mehr-liste">
+    <button class="eintrag" data-akt="einpassen">Ganzes Blatt zeigen</button>
+    <button class="eintrag" data-akt="png">Bild exportieren (PNG)</button>
+    <button class="eintrag" data-akt="json">Skizze exportieren (.windkanal.json)</button>
+    <div class="zl"><button class="eintrag" data-akt="stoss">Strömung anstoßen</button><button class="hq" data-h="anstossen">?</button></div>
+    <button class="eintrag" data-akt="leeren">Alles löschen</button>
+  </div>
+</div>
+
+<!-- ================= HUD ================= -->
+<div id="hud" class="glas">
+  <div id="hud-kurz">
+    <div class="w"><span>C<sub>d</sub></span><b class="zahl" id="h-cd">–</b></div>
+    <div class="w"><span>C<sub>l</sub></span><b class="zahl" id="h-cl">–</b></div>
+    <div class="w"><span>Re<sub>sim</sub></span><b class="zahl" id="h-re">–</b></div>
+    <div class="w"><span>Fps</span><b class="zahl" id="h-fps">–</b></div>
+  </div>
+  <div id="hud-lang" hidden><table id="hud-tab"></table></div>
+  <div id="hud-hinweis" hidden><span id="hud-hinweis-text"></span><button class="hq" data-h="re_sim">?</button></div>
+</div>
+
+<!-- ================= Farbskala ================= -->
+<div id="legende" class="glas">
+  <div id="leg-kopf"><span id="leg-titel"></span><span class="fuell"></span><button class="hq" id="leg-hq" data-h="m_partikel">?</button></div>
+  <div id="leg-balken"></div>
+  <div id="leg-werte" class="zahl"><span></span><span></span><span></span></div>
+</div>
+
+<!-- ================= Einstellungen ================= -->
+<aside id="panel" class="glas zu">
+  <header>
+    <div class="seg" id="panel-tabs"><button data-tab="skizze" class="an">Skizze</button><button data-tab="app">App</button></div>
+    <button class="kn" id="kn-panel-zu" title="Einklappen"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+  </header>
+  <div class="inhalt" id="tab-skizze">
+    <div class="zeile"><span class="lb">Name</span><input type="text" id="t-name" maxlength="60" style="flex:1"></div>
+    <div class="zeile block"><span class="lb">Geschwindigkeit</span><button class="hq" data-h="geschwindigkeit">?</button>
+      <span class="fuell"></span><input type="number" id="n-U" class="zahl" step="any" inputmode="decimal"><span class="klein" id="e-U"></span>
+      <input type="range" id="r-U" min="-1" max="2.3" step="0.01"></div>
+    <div class="zeile block"><span class="lb">Darstellung</span>
+      <div class="seg" data-ziel="st.modus"><button data-w="partikel">Partikel</button><button data-w="rauch">Rauch</button><button data-w="druck">Druck</button><button data-w="tempo">Tempo</button></div></div>
+    <div class="zeile block"><span class="lb">Qualität</span><button class="hq" data-h="qualitaet">?</button>
+      <div class="seg" data-ziel="dok.qualitaet" id="seg-qual"><button data-w="niedrig">Niedrig</button><button data-w="mittel">Mittel</button><button data-w="hoch">Hoch</button><button data-w="ultra">Ultra</button></div></div>
+    <div class="zeile" id="z-ultra" hidden><button class="taste haupt fuell" id="kn-einschwingen">Einschwingen</button><button class="hq" data-h="ultra">?</button></div>
+    <details id="erweitert">
+      <summary>Erweitert</summary>
+      <div class="zeile block"><span class="lb">Kanalwände</span><button class="hq" data-h="waende">?</button>
+        <div class="seg" data-ziel="dok.waende"><button data-w="frei">Reibungsfrei</button><button data-w="haft">Haftwand</button></div></div>
+      <div class="zeile block"><span class="lb">Simulationsbereich</span><button class="hq" data-h="bereich">?</button><span class="wert" id="w-bereich"></span>
+        <input type="range" id="r-bereich" min="0" max="1" step="0.05"></div>
+      <div class="zeile block"><span class="lb">Mittelungsfenster</span><button class="hq" data-h="fenster">?</button><span class="wert zahl" id="w-fenster"></span>
+        <input type="range" data-ziel="dok.fenster" min="0.5" max="10" step="0.5"></div>
+      <div class="zeile block"><span class="lb">Bezugslänge</span><button class="hq" data-h="bezug">?</button>
+        <div class="seg" data-ziel="dok.bezug"><button data-w="stirn">Stirnhöhe</button><button data-w="sehne">Sehne</button></div></div>
+      <div class="zeile"><span class="lb">Tiefe</span><button class="hq" data-h="tiefe">?</button><span class="fuell"></span>
+        <input type="number" class="zahl" data-ziel="dok.tiefe" min="0.001" step="any" inputmode="decimal"><span class="klein">m</span></div>
+      <div class="zeile block"><span class="lb">Medium</span><button class="hq" data-h="medium">?</button>
+        <div class="seg" data-ziel="dok.medium"><button data-w="luft">Luft 20 °C</button><button data-w="wasser">Wasser 20 °C</button></div></div>
+      <div class="zeile"><span class="lb">Raster/Maske anzeigen</span><button class="hq" data-h="raster">?</button>
+        <label class="schalter"><input type="checkbox" data-ziel="st.maske"><i></i></label></div>
+      <div class="zeile"><span class="lb">Striche automatisch schließen</span><button class="hq" data-h="autoschliessen">?</button>
+        <label class="schalter"><input type="checkbox" data-ziel="dok.autoZu"><i></i></label></div>
+      <div class="zeile block"><span class="lb">Anströmseite</span><button class="hq" data-h="seite">?</button>
+        <div class="seg" data-ziel="dok.seite"><button data-w="links">Links</button><button data-w="rechts">Rechts</button><button data-w="oben">Oben</button><button data-w="unten">Unten</button></div></div>
+      <div class="zeile"><span class="lb">Blatt</span><button class="hq" data-h="blatt">?</button><span class="fuell"></span>
+        <input type="number" class="zahl" id="n-breite" min="0" step="any" inputmode="decimal" style="width:68px"><span class="klein">×</span>
+        <input type="number" class="zahl" id="n-hoehe" min="0" step="any" inputmode="decimal" style="width:68px">
+        <select id="s-einheit"><option>mm</option><option>cm</option><option>m</option></select></div>
+    </details>
+    <p class="klein" style="margin-top:14px">Hinweis <button class="hq" data-h="zweiD" style="vertical-align:middle">?</button> &nbsp;2D-Werte sind kein c<sub>w</sub>-Wert eines 3D-Körpers.</p>
+  </div>
+  <div class="inhalt" id="tab-app" hidden>
+    <div class="zeile"><span class="lb">Hilfe-Modus</span><button class="hq" data-h="hilfemodus">?</button>
+      <label class="schalter"><input type="checkbox" data-ziel="app.hilfe"><i></i></label></div>
+    <div class="zeile block"><span class="lb">Einheit für Geschwindigkeit</span>
+      <div class="seg" data-ziel="app.vEinheit"><button data-w="m/s">m/s</button><button data-w="km/h">km/h</button></div></div>
+    <div class="zeile block"><span class="lb">Standardqualität</span><button class="hq" data-h="stdqual">?</button>
+      <div class="seg" data-ziel="app.stdQual"><button data-w="niedrig">Niedrig</button><button data-w="mittel">Mittel</button><button data-w="hoch">Hoch</button></div></div>
+    <div class="zeile"><button class="taste fuell" id="kn-knopf-reset">Position des Umschaltknopfs zurücksetzen</button><button class="hq" data-h="umschalter">?</button></div>
+    <div class="zeile" style="align-items:flex-start;margin-top:10px"><p class="klein" style="margin:0">Safari kann den Browser-Speicher löschen. Skizzen regelmäßig exportieren oder die App zum Home-Bildschirm hinzufügen.</p><button class="hq" data-h="speicher">?</button></div>
+    <p class="klein" id="gl-info" style="margin-top:14px"></p>
+  </div>
+</aside>
+
+<!-- ================= Schwebende Elemente ================= -->
+<button id="umschalter" title="Zwischen Zeichnen und Radieren wechseln">
+  <svg viewBox="0 0 24 24" id="um-icon"><path d="M9 19l-5-5L14 4l6 6-9 9z"/><path d="M8 10l6 6M9 19h11"/></svg>
+  <span class="hq" data-h="umschalter" role="button">?</span>
+</button>
+<div id="hilfe" class="glas" hidden></div>
+<div id="toast" class="glas" style="opacity:0"></div>
+<div id="fortschritt" class="glas" hidden><div id="fo-text"></div><div class="bahn"><i id="fo-balken"></i></div><button class="taste" id="fo-stop">Abbrechen</button></div>
+<div id="start" hidden></div>
+<div id="dialog" hidden></div>
+<div id="fehler" hidden><div><h2>Windkanal kann nicht starten</h2><p id="fehler-text"></p><pre id="fehler-detail"></pre></div></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   1  HILFETEXTE
+   Alle Texte der "?"-Symbole stehen hier. Schlüssel = data-h im HTML.
+   t = Überschrift, x = Erklärung (1–3 Sätze).
+   ===================================================================== */
+const HILFE = {
+  geschwindigkeit: { t: 'Anströmgeschwindigkeit', x: 'So schnell strömt das Medium ungestört auf deine Skizze zu. Zusammen mit Größe und Medium bestimmt sie die Reynolds-Zahl und damit, ob die Strömung ruhig anliegt oder Wirbel ablöst.' },
+  re_phys: { t: 'Re_phys – physikalische Reynolds-Zahl', x: 'Re = Geschwindigkeit × Bezugslänge ÷ Zähigkeit des Mediums. Sie beschreibt das Verhältnis von Trägheit zu Reibung in der echten Strömung: kleine Werte bedeuten zähes, ruhiges Umströmen, große Werte Wirbel und Turbulenz.' },
+  re_sim: { t: 'Re_sim – simulierte Reynolds-Zahl', x: 'Die Reynolds-Zahl, mit der tatsächlich gerechnet wird. Das Gitter kann nur begrenzt kleine Wirbel auflösen; deshalb wird Re nach oben gedeckelt, sonst würde die Rechnung instabil. Ist Re_sim kleiner als Re_phys, stimmt das Bild qualitativ, die Zahlen sind aber nur Anhaltswerte. Höhere Qualität hebt die Grenze an.' },
+  cd: { t: 'Cd – Widerstandsbeiwert', x: 'Widerstandskraft geteilt durch Staudruck (½·ρ·U²) × Bezugslänge × Tiefe. Der Beiwert macht Formen unabhängig von Größe und Geschwindigkeit vergleichbar: kleiner ist strömungsgünstiger.' },
+  cl: { t: 'Cl – Auftriebsbeiwert', x: 'Kraft quer zur Anströmung, genauso normiert wie Cd. Positiv bedeutet Auftrieb (bei waagerechter Anströmung nach oben, bei senkrechter nach rechts), negativ bedeutet Abtrieb.' },
+  widerstand: { t: 'Widerstand', x: 'Kraft auf die Hindernisse in Strömungsrichtung. Berechnet als Cd × ½·ρ·U² × Bezugslänge × Tiefe, also aus dem simulierten Beiwert und deinen physikalischen Angaben.' },
+  auftrieb: { t: 'Auftrieb / Abtrieb', x: 'Kraft quer zur Strömungsrichtung. Positiv = Auftrieb, negativ = Abtrieb. Sie schwankt, sobald sich Wirbel abwechselnd oben und unten ablösen.' },
+  bezug: { t: 'Bezugslänge', x: 'Die Länge, auf die Beiwerte und Reynolds-Zahl bezogen werden. „Stirnhöhe“ ist die Höhe der Hindernisse quer zur Strömung (üblich bei Fahrzeugen und stumpfen Körpern), „Sehne“ die Länge in Strömungsrichtung (üblich bei Flügelprofilen). Beiwerte sind nur bei gleicher Bezugslänge vergleichbar.' },
+  tiefe: { t: 'Tiefe und „pro Meter Tiefe“', x: 'Die Simulation ist zweidimensional: Sie rechnet einen Querschnitt, der senkrecht zum Bildschirm unendlich weitergeht. Kräfte gibt es daher zunächst pro Meter Tiefe (N/m). Mit der Tiefe gibst du an, wie breit dein Körper ist; daraus wird eine Kraft in Newton.' },
+  fenster: { t: 'Mittelungsfenster und Schwankungsbreite', x: 'Kräfte schwanken, wenn sich Wirbel ablösen. Angezeigt wird der Mittelwert über die letzten Sekunden dieses Fensters; der Wert hinter „±“ ist die Standardabweichung in diesem Zeitraum. Ein längeres Fenster liefert ruhigere Werte, reagiert aber träger auf Änderungen.' },
+  bereich: { t: 'Simulationsbereich', x: 'Legt fest, welcher Teil des Blatts berechnet wird. „Ganze Fläche“ rechnet das ganze Blatt mit gröberen Zellen. „Ausschnitt“ verteilt dieselbe Zellenzahl nur auf den sichtbaren Bereich, also feiner, dafür fehlt der Rest des Blatts und bei jedem Verschieben oder Zoomen beginnt die Strömung neu.' },
+  qualitaet: { t: 'Qualität', x: 'Anzahl der Rechenzellen entlang der langen Seite: Niedrig etwa 400, Mittel 600, Hoch 800. Mehr Zellen lösen feinere Details und höhere Reynolds-Zahlen auf, kosten aber Rechenzeit; die Strömung entwickelt sich dann langsamer.' },
+  ultra: { t: 'Ultra und „Einschwingen“', x: 'Ultra rechnet mit etwa 1600 Zellen und ist nicht echtzeitfähig. „Einschwingen“ rechnet ohne Bildaufbau so schnell wie möglich viele Zeitschritte vor, bis sich die Strömung eingestellt hat, und zeigt dann das Ergebnis.' },
+  raster: { t: 'Raster und Maske', x: 'Die Simulation kennt deine Skizze nur als Raster aus festen und flüssigen Zellen. Dieser Schalter zeigt die Zellen, die wirklich als Hindernis gerechnet werden. Dünne Wände werden auf mindestens 2 Zellen verbreitert, damit nichts durchströmt.' },
+  waende: { t: 'Kanalwände', x: 'Verhalten des oberen und unteren Rands. „Reibungsfrei“ lässt die Strömung an der Wand entlanggleiten, als ginge der Raum dahinter weiter. „Haftwand“ bremst die Strömung an der Wand auf null wie in einem echten Kanal, es entsteht eine Grenzschicht.' },
+  medium: { t: 'Medium', x: 'Luft (ν = 1,5·10⁻⁵ m²/s, ρ = 1,204 kg/m³) oder Wasser (ν = 1,0·10⁻⁶ m²/s, ρ = 998 kg/m³), jeweils bei 20 °C. Die Zähigkeit ν geht in die Reynolds-Zahl ein, die Dichte ρ in die Kräfte.' },
+  m_partikel: { t: 'Partikel', x: 'Viele masselose Teilchen werden von der Strömung mitgenommen und ziehen kurze Schweife. Die Farbe zeigt die örtliche Geschwindigkeit: dunkelblau langsam, hellgrün schnell.' },
+  m_rauch: { t: 'Rauch', x: 'Am Einlass werden Farbstreifen eingeleitet und mit der Strömung transportiert, wie Rauchfäden im echten Windkanal. Gut, um Ablösung und Wirbel zu erkennen.' },
+  m_druck: { t: 'Druckfeld', x: 'Zeigt den Überdruck (rot) und Unterdruck (blau) gegenüber dem Umgebungsdruck. Vor einem Hindernis staut sich die Strömung (Überdruck), an umströmten Kanten und im Nachlauf entsteht Unterdruck. Aus diesen Druckunterschieden entstehen Widerstand und Auftrieb.' },
+  m_tempo: { t: 'Geschwindigkeitsbetrag', x: 'Zeigt, wie schnell die Strömung an jeder Stelle ist, unabhängig von der Richtung. Dunkel = langsam (Staupunkt, Nachlauf), hell = schneller als die Anströmung (Engstellen, Umströmung von Kanten).' },
+  anzeigetempo: { t: 'Anzeigegeschwindigkeit', x: 'Wie schnell sich die Partikel auf dem Bildschirm bewegen. Der Regler ändert nur die Darstellung, nicht die berechnete Strömung.' },
+  strich: { t: 'Wandstärke', x: 'Dicke des gezeichneten Strichs in echten Einheiten. Sie wird nie dünner als 2 Rechenzellen dargestellt, weil dünnere Wände für die Simulation durchlässig wären.' },
+  radierer: { t: 'Strich- und Präzisionsradierer', x: '„Strich“ löscht jedes Objekt, das du berührst, vollständig. „Präzise“ radiert nur dort, wo du entlangfährst; die Größe ist einstellbar. Das Radierte gehört zum Objekt und wandert beim Verschieben oder Drehen mit.' },
+  umschalter: { t: 'Umschaltknopf', x: 'Ersatz für den Doppeltipp am Pencil, den Webseiten nicht empfangen können. Ein Tipp wechselt vom Zeichenwerkzeug zum zuletzt benutzten Radierer, ein weiterer Tipp zurück. Der Knopf lässt sich an eine beliebige Stelle ziehen.' },
+  autoschliessen: { t: 'Automatisch schließen', x: 'Endet ein Strich nahe an seinem Anfang, wird daraus eine gefüllte, feste Form. Ausschalten, wenn du offene Ringe als dünne Wand zeichnen willst.' },
+  seite: { t: 'Anströmseite', x: 'Von welcher Blattkante die Strömung kommt. Widerstand zählt immer in Strömungsrichtung, Auftrieb quer dazu.' },
+  blatt: { t: 'Blattgröße', x: 'Die echte Größe der Zeichenfläche. Sie legt den Maßstab fest: Lineale, Reynolds-Zahl und Kräfte beziehen sich darauf.' },
+  zweiD: { t: '2D ist nicht 3D', x: 'Ein 2D-Querschnitt wird nur oben und unten umströmt, ein echter Körper auch seitlich. 2D-Beiwerte sind deshalb meist deutlich höher als der cw-Wert eines 3D-Körpers (Kreiszylinder ≈ 1,2, Kugel ≈ 0,45). Nutze die Werte, um Varianten miteinander zu vergleichen, nicht als absolute Vorhersage.' },
+  fps: { t: 'Fps und Schritte', x: 'Bilder pro Sekunde. Die App passt die Zahl der Rechenschritte pro Bild laufend an, damit die Anzeige flüssig bleibt.' },
+  zelle: { t: 'Gitter und Zellgröße', x: 'Größe einer Rechenzelle in echten Einheiten und Anzahl der Zellen. Details, die kleiner als etwa 2 Zellen sind, kann die Simulation nicht auflösen.' },
+  hilfemodus: { t: 'Hilfe-Modus', x: 'Blendet die „?“-Symbole ein oder aus. Diesen Schalter findest du immer unter Zahnrad → App.' },
+  stdqual: { t: 'Standardqualität', x: 'Mit dieser Qualitätsstufe werden neue Skizzen angelegt. In jeder Skizze lässt sie sich einzeln ändern.' },
+  speicher: { t: 'Speicherhinweis', x: 'Skizzen liegen im Speicher des Browsers auf diesem Gerät. Safari kann ihn leeren, wenn die Seite längere Zeit nicht benutzt wird. Als App auf dem Home-Bildschirm ist der Speicher dauerhafter; ein Export als Datei ist die sichere Lösung.' },
+  lasso: { t: 'Lasso', x: 'Umkreise Objekte oder tippe sie an, um sie auszuwählen. Die Auswahl lässt sich verschieben, an den Ecken skalieren und am runden Griff drehen. Im HUD erscheinen zusätzlich die Kräfte nur für die Auswahl.' },
+  einrasten: { t: 'Einrasten', x: 'Legt fest, in welchen Schritten der Winkel beim Drehen einrastet. Für exakte Werte den Winkel als Zahl eingeben.' },
+  freiskal: { t: 'Frei skalieren', x: 'Aus: Breite und Höhe ändern sich gemeinsam. An: Die Auswahl lässt sich entlang ihrer eigenen Achsen unabhängig strecken oder stauchen.' },
+  formen: { t: 'Formen', x: 'Linie, Rechteck und Ellipse werden durch Ziehen aufgespannt. Profile werden an der Stiftposition platziert; Sehnenlänge und Anstellwinkel stellst du hier ein.' },
+  profil: { t: 'NACA-Profile', x: 'Vier Ziffern beschreiben ein Flügelprofil: 1. Ziffer = Wölbung in % der Sehne, 2. = Lage der größten Wölbung in Zehnteln, 3.–4. = Dicke in %. 0012 ist symmetrisch und 12 % dick, 2412 hat 2 % Wölbung bei 40 % der Sehne.' },
+  anstellwinkel: { t: 'Anstellwinkel', x: 'Winkel zwischen Profilsehne und Anströmung. Positive Werte heben die Profilnase an und erzeugen Auftrieb; ab etwa 12–15° reißt die Strömung ab.' },
+  dat: { t: '.dat-Import', x: 'Liest Profilkoordinaten im Selig-Format (einmal um das Profil herum) oder im Lednicer-Format (Ober- und Unterseite getrennt), wie sie z. B. die UIUC-Profildatenbank anbietet.' },
+  anstossen: { t: 'Strömung anstoßen', x: 'Der Pencil schiebt das Fluid in Zugrichtung an, wie ein Finger im Wasser. Nur zum Ausprobieren; die Kraftwerte sind währenddessen nicht aussagekräftig.' },
+  auswahlkraft: { t: 'Auswahl', x: 'Kräfte und Beiwerte nur für die mit dem Lasso ausgewählten Objekte, mit deren eigener Bezugslänge. So lässt sich z. B. der Anteil eines Flügels am Gesamtwiderstand ablesen.' },
+  drehwinkel: { t: 'Drehwinkel', x: 'Winkel, um den die Auswahl seit dem Auswählen gedreht wurde; gegen den Uhrzeigersinn positiv. Eine eingegebene Zahl dreht die Auswahl exakt auf diesen Wert.' },
+  d_name: { t: 'Name', x: 'Unter diesem Namen erscheint die Skizze auf der Startseite und im Dateinamen beim Export.' },
+};
+/* =====================================================================
+   2  GRUNDLAGEN – Konstanten, Zustand, Hilfsfunktionen
+   ===================================================================== */
+const VERSION = 1;                                   // Versionsfeld der .windkanal.json
+const MEDIEN = {
+  luft:   { name: 'Luft 20 °C',   nu: 1.5e-5, rho: 1.204 },
+  wasser: { name: 'Wasser 20 °C', nu: 1.0e-6, rho: 998 },
+};
+const QUAL = {                                       // Zellen entlang der langen Seite
+  niedrig: { name: 'Niedrig', zellen: 400 },
+  mittel:  { name: 'Mittel',  zellen: 600 },
+  hoch:    { name: 'Hoch',    zellen: 800 },
+  ultra:   { name: 'Ultra',   zellen: 1600 },
+};
+const U_GITTER = 0.1;          // maximale Gittergeschwindigkeit (Mach ≈ 0,17)
+const NU_MIN = 0.0007;         // kleinste Gitterviskosität  -> tau = 0,5021 (knapp über der Stabilitätsgrenze)
+const NU_MAX = 0.25;           // größte Gitterviskosität    -> tau = 1,25
+const SCHRITTE_PRO_S = 2400;   // angestrebte Simulationsschritte pro Sekunde
+const N_PARTIKEL = 24000;      // Obergrenze; aktiv sind je nach Bildschirmfläche weniger (siehe partikelZahl)
+const EINHEIT_M = { mm: 0.001, cm: 0.01, m: 1 };
+
+/* ---- App-weite Einstellungen (localStorage) ---- */
+const APP = { hilfe: true, vEinheit: 'm/s', stdQual: 'mittel', knopf: null, einrasten: 5, freiSkal: false, radModus: 'praezise' };
+function appLaden() { try { Object.assign(APP, JSON.parse(localStorage.getItem('windkanal.app') || '{}')); } catch (e) {} }
+function appSpeichern() { try { localStorage.setItem('windkanal.app', JSON.stringify(APP)); } catch (e) {} }
+
+/* ---- Dokument (eine Skizze). Längen in Metern, Koordinaten: x nach rechts, y nach unten ---- */
+function neuesDok(o = {}) {
+  const d = Object.assign({
+    id: 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    name: 'Skizze', breite: 2, hoehe: 1, einheit: 'm', seite: 'links', U: 10,
+    medium: 'luft', qualitaet: APP.stdQual, waende: 'frei', bezug: 'stirn', tiefe: 1,
+    fenster: 3, autoZu: true, bereich: 1, strich: 0, radGr: 0, objekte: [], nid: 1, zeit: Date.now(),
+  }, o);
+  const lang = Math.max(d.breite, d.hoehe);
+  if (!d.strich) d.strich = lang / 160;
+  if (!d.radGr) d.radGr = lang / 40;
+  return d;
+}
+let DOK = neuesDok();
+
+/* ---- Laufzeit-Zustand der Oberfläche ---- */
+const ST = {
+  werkzeug: 'frei', vorWerkzeug: 'frei', radModus: 'praezise', form: 'linie',
+  modus: 'partikel', maske: false, pause: false, tempo: 1,
+  auswahl: new Set(),              // IDs der per Lasso gewählten Objekte
+  ansicht: { k: 100, ox: 0, oy: 0 }, // Bildschirm-px = Dokument-m * k + (ox, oy)
+};
+
+/* ---- Zustand der Simulation ---- */
+const SIM = {
+  nx: 0, ny: 0, dx: 1,             // Gittergröße, Zellgröße in m
+  rect: { x: 0, y: 0, w: 1, h: 1 },// simulierter Bereich in Dokumentkoordinaten
+  dokUV: [1, 0, 0, 1, 0, 0],       // affine Abbildung Dokument -> Simulations-UV (s in Strömungsrichtung)
+  uZiel: U_GITTER, uEin: 0,        // Gitter-Einlassgeschwindigkeit: Ziel und aktueller (hochfahrender) Wert
+  tau: 0.6, nuMin: NU_MIN,
+  rePhys: NaN, reSim: NaN, gedeckelt: false,
+  lref: 0, lrefSel: 0,             // Bezugslänge in m (alle Objekte / Auswahl)
+  geo: null,                       // Messwerte der Maske (Stirnhöhe, Sehne in Zellen)
+  schritte: 0, proBild: 6,
+};
+
+/* ---- Affine 2D-Abbildungen im Canvas-Format [a,b,c,d,e,f]: x' = a·x + c·y + e, y' = b·x + d·y + f ---- */
+const aff = {
+  mul(m, n) {                                        // erst n, dann m
+    return [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
+            m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+            m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+  },
+  inv(m) {
+    const d = m[0] * m[3] - m[1] * m[2];
+    return [m[3] / d, -m[1] / d, -m[2] / d, m[0] / d,
+            (m[2] * m[5] - m[3] * m[4]) / d, (m[1] * m[4] - m[0] * m[5]) / d];
+  },
+  pt(m, x, y) { return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]; },
+  mat3(m) { return new Float32Array([m[0], m[1], 0, m[2], m[3], 0, m[4], m[5], 1]); },  // spaltenweise für GLSL
+  skal(m) { return Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])); },                   // mittlerer Maßstab
+};
+
+/* ---- Abbildung Dokument -> Simulations-UV je Anströmseite.
+        Intern strömt es immer in +s; die vier Seiten sind reine Drehungen (0°, 180°, ±90°). ---- */
+function dokZuUV(seite, r) {
+  switch (seite) {
+    case 'rechts': return [-1 / r.w, 0, 0, -1 / r.h, 1 + r.x / r.w, 1 + r.y / r.h];
+    case 'oben':   return [0, -1 / r.w, 1 / r.h, 0, -r.y / r.h, 1 + r.x / r.w];
+    case 'unten':  return [0, 1 / r.w, -1 / r.h, 0, 1 + r.y / r.h, -r.x / r.w];
+    default:       return [1 / r.w, 0, 0, 1 / r.h, -r.x / r.w, -r.y / r.h];
+  }
+}
+const istQuer = () => DOK.seite === 'oben' || DOK.seite === 'unten';   // Strömung senkrecht auf dem Bildschirm
+// Vorzeichen: Auftrieb = AUFTRIEB_VZ × (Gitterkraft in +t). Positiv = nach oben (bzw. nach rechts bei senkrechter Anströmung).
+const AUFTRIEB_VZ = { links: -1, rechts: 1, oben: -1, unten: 1 };
+
+/* ---- Zahlen und Einheiten ---- */
+const klemme = (x, a, b) => Math.min(b, Math.max(a, x));
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+function fz(x, stellen = 3) {                         // Zahl mit deutschem Dezimalkomma und signifikanten Stellen
+  if (x == null || !isFinite(x)) return '–';
+  if (x === 0) return '0';
+  return x.toLocaleString('de-DE', { maximumSignificantDigits: stellen });
+}
+function fLaenge(m, stellen = 3) {                    // Länge mit automatischer Einheit
+  const a = Math.abs(m);
+  if (a < 0.01) return fz(m * 1000, stellen) + ' mm';
+  if (a < 1) return fz(m * 100, stellen) + ' cm';
+  return fz(m, stellen) + ' m';
+}
+const vFaktor = () => (APP.vEinheit === 'km/h' ? 3.6 : 1);
+const fTempo = (ms, stellen = 3) => fz(ms * vFaktor(), stellen) + ' ' + APP.vEinheit;
+function fKraft(n) {
+  const a = Math.abs(n);
+  if (!isFinite(n)) return '–';
+  if (a >= 1000) return fz(n / 1000) + ' kN';
+  if (a < 0.01 && a > 0) return fz(n * 1000) + ' mN';
+  return fz(n) + ' N';
+}
+function fRe(re) {
+  if (!isFinite(re)) return '–';
+  if (re >= 1e6) return fz(re / 1e6, 3) + ' Mio.';
+  return fz(re, re >= 1000 ? 3 : 2);
+}
+function schritt125(roh) {                            // nächstgrößerer Wert aus dem 1-2-5-Raster
+  const p = Math.pow(10, Math.floor(Math.log10(roh))), r = roh / p;
+  return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 5 ? 5 : 10) * p;
+}
+function toast(text, ms = 2600) {
+  const t = $('#toast'); t.textContent = text; t.style.opacity = 1;
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.style.opacity = 0), ms);
+}
+function fatal(text, detail) {
+  $('#fehler-text').textContent = text; $('#fehler-detail').textContent = detail || ''; $('#fehler').hidden = false;
+}
+/* =====================================================================
+   3  WEBGL – Kontext, Shader, Programme, Texturen
+   ===================================================================== */
+const glc = $('#gl');
+let gl = null;
+const GLF = { ifmt: 0, name: '', halb: false };       // gewähltes Float-Format der Simulations-Texturen
+const P = {};                                         // alle Shader-Programme
+let leerVAO = null;
+
+/* ---------- Gemeinsame GLSL-Bausteine ---------- */
+const GLSL_KOPF = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+`;
+// Vollbild-Dreieck ohne Vertex-Daten
+const VS_VOLL = GLSL_KOPF + `
+void main(){ gl_Position = vec4(vec2(float((gl_VertexID<<1)&2), float(gl_VertexID&2))*2.0-1.0, 0.0, 1.0); }`;
+
+// D2Q9-Gitter. Gespeichert wird g_i = f_i − w_i (Abweichung vom Ruhezustand): rettet Präzision bei 16-Bit-Float.
+// Texturen: uF0 = g0..g3, uF1 = g4..g7, uF2 = (g8, ρ−1, u_x, u_y)
+const GLSL_D2Q9 = `
+const ivec2 C[9] = ivec2[9](ivec2(0,0),ivec2(1,0),ivec2(0,1),ivec2(-1,0),ivec2(0,-1),ivec2(1,1),ivec2(-1,1),ivec2(-1,-1),ivec2(1,-1));
+const float W[9] = float[9](4./9.,1./9.,1./9.,1./9.,1./9.,1./36.,1./36.,1./36.,1./36.);
+const int OPP[9] = int[9](0,3,4,1,2,7,8,5,6);        // Gegenrichtung (Bounce-Back)
+const int MIR[9] = int[9](0,1,4,3,2,8,7,6,5);        // an waagerechter Wand gespiegelt (Free-Slip)
+uniform sampler2D uF0, uF1, uF2, uMaske;
+uniform ivec2 uN;
+bool fest(ivec2 q){ return texelFetch(uMaske, q, 0).r > 0.3; }
+`;
+// Bilineare Abfrage der Makrogrößen (ρ−1, u) – von Hand, weil Float-Texturen auf iOS nicht linear filterbar sind
+const GLSL_MAKRO = `
+vec4 makro(vec2 uv){
+  vec2 x = uv*vec2(uN) - 0.5; vec2 f = fract(x); ivec2 i = ivec2(floor(x)); ivec2 mx = uN - 1;
+  vec4 a = texelFetch(uF2, clamp(i, ivec2(0), mx), 0), b = texelFetch(uF2, clamp(i+ivec2(1,0), ivec2(0), mx), 0);
+  vec4 c = texelFetch(uF2, clamp(i+ivec2(0,1), ivec2(0), mx), 0), d = texelFetch(uF2, clamp(i+ivec2(1,1), ivec2(0), mx), 0);
+  return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+}`;
+
+/* ---------- Zeitschritt: Strömen (Pull) + Kollision in einem Durchgang ---------- */
+const FS_SCHRITT = GLSL_KOPF + GLSL_D2Q9 + `
+uniform float uTau;        // Relaxationszeit der molekularen Viskosität
+uniform float uUein;       // Einlassgeschwindigkeit (wird sanft hochgefahren)
+uniform float uBeschl;     // Beim Hochfahren wird das ganze Feld gleichmäßig mitbeschleunigt (vermeidet eine Druckwelle)
+uniform int uHaft;         // 1 = Haftwand oben/unten, 0 = reibungsfrei
+uniform float uSmag;       // 18·√2·Cs² für das Smagorinsky-Modell
+uniform float uSchwamm;    // Breite der Dämpfungszone vor dem Auslass (Zellen)
+uniform vec4 uStoss;       // "Strömung anstoßen": xy = Ort (Zellen), zw = Impuls
+uniform float uStossR;
+layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2;
+
+float holeG(int i, ivec2 q){
+  if (i < 4) return texelFetch(uF0, q, 0)[i];
+  if (i < 8) return texelFetch(uF1, q, 0)[i-4];
+  return texelFetch(uF2, q, 0).x;
+}
+// Gleichgewicht minus Gewicht
+float ggw(int i, float dr, vec2 u){
+  float cu = dot(vec2(C[i]), u);
+  return W[i]*(dr + (1.0+dr)*(3.0*cu + 4.5*cu*cu - 1.5*dot(u,u)));
+}
+void schreibeGgw(float dr, vec2 u){
+  o0 = vec4(ggw(0,dr,u), ggw(1,dr,u), ggw(2,dr,u), ggw(3,dr,u));
+  o1 = vec4(ggw(4,dr,u), ggw(5,dr,u), ggw(6,dr,u), ggw(7,dr,u));
+  o2 = vec4(ggw(8,dr,u), dr, u);
+}
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  ivec2 mx = uN - 1;
+
+  // --- Feste Zelle: hält das Gleichgewicht der umliegenden Mittelwerte bereit.
+  //     Wird sie durch Radieren oder Verschieben flüssig, startet sie damit ohne Stoß.
+  if (fest(p)) {
+    vec3 sf = vec3(0.0), sa = vec3(0.0); float nf = 0.0;
+    for (int k = 1; k < 9; k++) {
+      ivec2 q = clamp(p + C[k], ivec2(0), mx);
+      vec3 m = texelFetch(uF2, q, 0).yzw;
+      float fl = fest(q) ? 0.0 : 1.0;
+      sf += fl*m; nf += fl; sa += m;
+    }
+    vec3 m = nf > 0.0 ? sf/nf : sa*vec3(0.125, 0.11, 0.11);
+    schreibeGgw(clamp(m.x, -0.2, 0.2), clamp(m.yz, -0.2, 0.2));
+    return;
+  }
+  // --- Einlass: Gleichgewicht mit vorgegebener Geschwindigkeit
+  //     Staut sich das Fluid, weil Hindernisse den Kanal fast versperren, wird der Zustrom gedrosselt (sonst stiege die Dichte unbegrenzt).
+  if (p.x == 0) {
+    float stau = texelFetch(uF2, p + ivec2(1,0), 0).y;
+    schreibeGgw(0.0, vec2(uUein*(1.0 - smoothstep(0.04, 0.14, stau)), 0.0)); return;
+  }
+  // --- Auslass: Nullgradient (Nachbarzelle übernehmen), Dichte auf Umgebungsdruck gezogen
+  if (p.x == mx.x) {
+    ivec2 q = p - ivec2(1,0);
+    if (fest(q)) { schreibeGgw(0.0, vec2(0.0)); return; }
+    vec4 a = texelFetch(uF0,q,0), b = texelFetch(uF1,q,0), c = texelFetch(uF2,q,0);
+    float dr = c.y; vec2 u = c.zw; float g[9] = float[9](a.x,a.y,a.z,a.w,b.x,b.y,b.z,b.w,c.x);
+    float n[9];
+    for (int i = 0; i < 9; i++) { float cu = dot(vec2(C[i]),u); n[i] = g[i] - W[i]*dr*(1.0 + 3.0*cu + 4.5*cu*cu - 1.5*dot(u,u)); }
+    o0 = vec4(n[0],n[1],n[2],n[3]); o1 = vec4(n[4],n[5],n[6],n[7]); o2 = vec4(n[8], 0.0, u);
+    return;
+  }
+
+  // --- Strömen: jede Richtung vom Nachbarn holen (Pull-Schema)
+  vec4 a = texelFetch(uF0,p,0), b = texelFetch(uF1,p,0), c = texelFetch(uF2,p,0);
+  float eig[9] = float[9](a.x,a.y,a.z,a.w,b.x,b.y,b.z,b.w,c.x);
+  float g[9];
+  g[0] = eig[0];
+  for (int i = 1; i < 9; i++) {
+    ivec2 q = p - C[i];
+    if (q.y < 0 || q.y > mx.y) {                         // Kanalwand oben/unten
+      if (uHaft == 1) g[i] = eig[OPP[i]];                // Haftwand: Halfway-Bounce-Back
+      else {                                             // reibungsfrei: Spiegelreflexion
+        ivec2 q2 = ivec2(q.x, p.y);
+        g[i] = fest(q2) ? eig[OPP[i]] : holeG(MIR[i], q2);
+      }
+    } else if (fest(q)) g[i] = eig[OPP[i]];              // Hindernis: Halfway-Bounce-Back
+    else g[i] = holeG(i, q);
+  }
+  // --- Momente
+  float dr = 0.0; vec2 j = vec2(0.0); float pxx = 0.0, pyy = 0.0, pxy = 0.0;
+  for (int i = 0; i < 9; i++) {
+    vec2 ci = vec2(C[i]); dr += g[i]; j += ci*g[i];
+    pxx += ci.x*ci.x*g[i]; pyy += ci.y*ci.y*g[i]; pxy += ci.x*ci.y*g[i];
+  }
+  float rho = 1.0 + dr;
+  // "Strömung anstoßen": Impuls in einem weichen Kreis zugeben
+  j.x += rho*uBeschl;
+  if (uStossR > 0.0) { vec2 d = (vec2(p) - uStoss.xy)/uStossR; j += rho*uStoss.zw*exp(-dot(d,d)); }
+  rho = max(rho, 0.4); dr = rho - 1.0;
+  vec2 u = j/rho;
+  // Sicherheitsbegrenzung: in engen Spalten nie schneller als Mach ≈ 0,65 (hält die Rechnung am Leben)
+  float ub = length(u); if (ub > 0.38) u *= 0.38/ub;
+  // --- Nichtgleichgewichts-Spannung Π = Σ c c f − (ρ c_s² I + ρ u u)
+  pxx -= dr/3.0 + rho*u.x*u.x; pyy -= dr/3.0 + rho*u.y*u.y; pxy -= rho*u.x*u.y;
+  // --- Smagorinsky: lokale Wirbelviskosität aus |Π|
+  float pim = sqrt(pxx*pxx + 2.0*pxy*pxy + pyy*pyy);
+  float tau = 0.5*(uTau + sqrt(uTau*uTau + uSmag*pim/rho));
+  // --- Dämpfungszone vor dem Auslass schluckt Wirbel, bevor sie den Rand erreichen
+  float sp = clamp((float(p.x) - (float(uN.x) - uSchwamm))/uSchwamm, 0.0, 1.0);
+  tau += 0.4*sp*sp;
+  float om = 1.0 - 1.0/tau;
+  // --- Regularisierte BGK-Kollision: f = f_eq + (1 − 1/τ)·f_neq, f_neq aus Π rekonstruiert
+  float n[9];
+  for (int i = 0; i < 9; i++) {
+    vec2 ci = vec2(C[i]);
+    float neq = W[i]*4.5*((ci.x*ci.x - 1.0/3.0)*pxx + 2.0*ci.x*ci.y*pxy + (ci.y*ci.y - 1.0/3.0)*pyy);
+    n[i] = ggw(i, dr, u) + om*neq;
+  }
+  o0 = vec4(n[0],n[1],n[2],n[3]); o1 = vec4(n[4],n[5],n[6],n[7]); o2 = vec4(n[8], dr, u);
+}`;
+
+/* ---------- Kräfte: Momentum Exchange an allen Fluid-Wand-Verbindungen ---------- */
+const FS_KRAFT = GLSL_KOPF + GLSL_D2Q9 + `
+out vec4 o;                 // xy = Kraft auf alle Hindernisse, zw = Kraft auf die Auswahl
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy); ivec2 mx = uN - 1;
+  o = vec4(0.0);
+  if (fest(p) || p.x == 0 || p.x == mx.x) return;
+  vec4 a = texelFetch(uF0,p,0), b = texelFetch(uF1,p,0), c = texelFetch(uF2,p,0);
+  // Instabilität erkennen: NaN oder unsinnige Werte -> riesige Zahl, die beim Auslesen auffällt
+  if (!(abs(c.y) < 0.5) || !(dot(c.zw,c.zw) < 0.3)) { o = vec4(1e30); return; }
+  float eig[9] = float[9](a.x,a.y,a.z,a.w,b.x,b.y,b.z,b.w,c.x);
+  for (int i = 1; i < 9; i++) {
+    ivec2 q = p - C[i];
+    if (q.y < 0 || q.y > mx.y) continue;
+    vec4 m = texelFetch(uMaske, q, 0);
+    if (m.r > 0.3) {
+      // Die Population OPP[i] prallt an der Wand ab und kommt als i zurück: Impulsübertrag −2·c_i·f
+      vec2 df = -2.0*vec2(C[i])*eig[OPP[i]];
+      o.xy += df;
+      if (m.g > 0.3) o.zw += df;
+    }
+  }
+}`;
+// Summen-Reduktion: je 4×4 Texel zu einem
+const FS_SUMME = GLSL_KOPF + `
+uniform sampler2D uT; uniform ivec2 uQ; out vec4 o;
+void main(){
+  ivec2 b = ivec2(gl_FragCoord.xy)*4; vec4 s = vec4(0.0);
+  for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) { ivec2 q = b + ivec2(i,j); if (q.x < uQ.x && q.y < uQ.y) s += texelFetch(uT, q, 0); }
+  o = s;
+}`;
+
+/* ---------- Partikel: Bewegung per Transform Feedback ---------- */
+const VS_PARTIKEL = GLSL_KOPF + `
+uniform sampler2D uF2, uMaske; uniform ivec2 uN;
+uniform float uWeg;        // Zellen pro Gittergeschwindigkeit in diesem Bild (Schritte × Anzeigegeschwindigkeit)
+uniform float uDt;         // Sekunden seit dem letzten Bild
+uniform vec4 uRect;        // sichtbarer Bereich in UV: hier werden Partikel neu geboren
+uniform uint uSaat;
+in vec4 aP;                // xy = Ort (UV), z = Alter, w = Lebensdauer
+out vec4 vP;
+` + GLSL_MAKRO + `
+uint hsh(uint x){ x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; }
+float zufall(uint k){ return float(hsh(uint(gl_VertexID)*0x9e3779b9U + uSaat*7919U + k) >> 8) / 16777216.0; }
+void main(){
+  vec2 np = aP.xy + makro(aP.xy).zw*uWeg/vec2(uN);
+  float alter = aP.z + uDt;
+  bool tot = alter > aP.w || any(lessThan(np, uRect.xy)) || any(greaterThan(np, uRect.zw));
+  if (!tot) tot = texelFetch(uMaske, clamp(ivec2(np*vec2(uN)), ivec2(0), uN-1), 0).r > 0.3;
+  if (tot) vP = vec4(mix(uRect.xy, uRect.zw, vec2(zufall(1u), zufall(2u))), 0.0, 1.5 + 4.5*zufall(3u));
+  else vP = vec4(np, alter, aP.w);
+  gl_Position = vec4(0.0);
+}`;
+const FS_NICHTS = GLSL_KOPF + `out vec4 o; void main(){ o = vec4(0.0); }`;
+// Zeichnen: jedes Partikel als kurzer Strich vom alten zum neuen Ort (instanziertes Viereck)
+const VS_PZEICHNEN = GLSL_KOPF + `
+uniform sampler2D uF2; uniform ivec2 uN;
+uniform mat3 uUVpx;        // UV -> Bildschirm-px
+uniform vec2 uBild;        // Bildschirmgröße in px
+uniform float uBreite, uVmax;
+in vec4 aA; in vec4 aB;
+out float vT; out float vAlpha;
+` + GLSL_MAKRO + `
+void main(){
+  vec2 pb = (uUVpx*vec3(aB.xy,1.0)).xy, pa = (uUVpx*vec3(aA.xy,1.0)).xy;
+  if (aB.z < 1e-5) pa = pb;                                  // frisch geboren: kein Strich quer durchs Bild
+  vec2 d = pb - pa; float l = length(d); vec2 t = l > 1e-3 ? d/l : vec2(1.0,0.0); vec2 n = vec2(-t.y, t.x);
+  float ende = gl_VertexID < 2 ? 0.0 : 1.0, seite = (gl_VertexID & 1) == 0 ? -1.0 : 1.0;
+  vec2 pos = mix(pa - t*uBreite*0.5, pb + t*uBreite*0.5, ende) + n*seite*uBreite*0.5;
+  gl_Position = vec4(pos.x/uBild.x*2.0 - 1.0, 1.0 - pos.y/uBild.y*2.0, 0.0, 1.0);
+  vT = clamp(length(makro(aB.xy).zw)/uVmax, 0.0, 1.0);
+  vAlpha = smoothstep(0.0, 0.15, aB.z)*(1.0 - smoothstep(aB.w - 0.5, aB.w, aB.z));
+}`;
+const FS_PZEICHNEN = GLSL_KOPF + `
+uniform sampler2D uLut; uniform float uHell; in float vT; in float vAlpha; out vec4 o;
+void main(){ o = vec4(texture(uLut, vec2(vT, 0.5)).rgb*vAlpha*uHell, 1.0); }`;
+// Schweife: altes Bild abdunkeln und bei Pan/Zoom mitverschieben
+const FS_SCHWEIF = GLSL_KOPF + `
+uniform sampler2D uT; uniform vec2 uBild; uniform vec3 uRe; uniform float uFade, uAb; out vec4 o;
+void main(){
+  vec2 q = (gl_FragCoord.xy*uRe.x + uRe.yz)/uBild;
+  vec3 c = (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) ? vec3(0.0) : texture(uT, q).rgb;
+  o = vec4(max(c*uFade - uAb, 0.0), 1.0);
+}`;
+
+/* ---------- Rauch: Farbstoff semi-Lagrange mittragen ---------- */
+const FS_RAUCH = GLSL_KOPF + `
+uniform sampler2D uF2, uMaske, uD; uniform ivec2 uN; uniform vec2 uGr; uniform float uSchritte, uStreifen; out vec4 o;
+` + GLSL_MAKRO + `
+void main(){
+  vec2 uv = gl_FragCoord.xy/uGr;
+  if (texelFetch(uMaske, clamp(ivec2(uv*vec2(uN)), ivec2(0), uN-1), 0).r > 0.3) { o = vec4(0.0); return; }
+  vec2 v = makro(uv).zw;
+  vec2 q = uv - v*uSchritte/vec2(uN);
+  q = uv - 0.5*(v + makro(q).zw)*uSchritte/vec2(uN);          // Rückverfolgung 2. Ordnung
+  float d = texture(uD, q).r;
+  if (uv.x*float(uN.x) < 3.0 || q.x < 0.0) {                    // Einlass: Streifen
+    float s = abs(fract(uv.y*uStreifen) - 0.5);
+    d = 1.0 - smoothstep(0.10, 0.20, s);
+  }
+  o = vec4(d, d, d, 1.0);
+}`;
+
+/* ---------- Anzeige: alle vier Modi, Maske und Raster ---------- */
+const FS_ANZEIGE = GLSL_KOPF + `
+uniform sampler2D uF2, uMaske, uSchweif, uD, uLut; uniform ivec2 uN;
+uniform mat3 uPxUV;        // Bildschirm-px -> UV
+uniform vec2 uBild; uniform float uDpr;
+uniform int uModus;        // 0 Partikel, 1 Rauch, 2 Druck, 3 Geschwindigkeit
+uniform float uPmax, uVmax, uPxZelle; uniform int uMaskeAn;
+out vec4 o;
+` + GLSL_MAKRO + `
+void main(){
+  vec2 px = vec2(gl_FragCoord.x, uBild.y - gl_FragCoord.y)/uDpr;
+  vec2 uv = (uPxUV*vec3(px,1.0)).xy;
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { o = vec4(0.045,0.052,0.062,1.0); return; }
+  vec3 col;
+  if (uModus == 0) col = texture(uSchweif, gl_FragCoord.xy/uBild).rgb;
+  else if (uModus == 1) col = texture(uLut, vec2(texture(uD, uv).r, 0.5)).rgb;
+  else {
+    vec4 m = makro(uv);
+    float t = uModus == 2 ? 0.5 + 0.5*clamp(m.y/uPmax, -1.0, 1.0) : clamp(length(m.zw)/uVmax, 0.0, 1.0);
+    col = texture(uLut, vec2(t, 0.5)).rgb;
+  }
+  vec2 z = uv*vec2(uN);
+  if (uMaskeAn == 1 && texelFetch(uMaske, clamp(ivec2(z), ivec2(0), uN-1), 0).r > 0.3) col = mix(col, vec3(1.0,0.35,0.6), 0.6);
+  // Zellraster: ab etwa 8 px pro Zelle dezent, bei eingeschalteter Maske schon früher
+  float al = uMaskeAn == 1 ? smoothstep(3.0, 6.0, uPxZelle)*0.35 : smoothstep(7.0, 12.0, uPxZelle)*0.22;
+  if (al > 0.0) {
+    vec2 k = (0.5 - abs(fract(z) - 0.5))*uPxZelle;             // Abstand zur Zellkante in px
+    col = mix(col, vec3(0.55,0.66,0.7), al*(1.0 - smoothstep(0.0, 1.0, min(k.x,k.y))));
+  }
+  o = vec4(col, 1.0);
+}`;
+
+/* ---------- GL-Hilfsfunktionen ---------- */
+function glShader(typ, quelle) {
+  const s = gl.createShader(typ); gl.shaderSource(s, quelle); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('Shader-Fehler: ' + gl.getShaderInfoLog(s));
+  return s;
+}
+function glProgramm(vs, fs, tf) {
+  const p = gl.createProgram();
+  gl.attachShader(p, glShader(gl.VERTEX_SHADER, vs)); gl.attachShader(p, glShader(gl.FRAGMENT_SHADER, fs));
+  if (tf) gl.transformFeedbackVaryings(p, tf, gl.INTERLEAVED_ATTRIBS);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('Link-Fehler: ' + gl.getProgramInfoLog(p));
+  const u = {};
+  for (let i = 0, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i < n; i++) {
+    const name = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, '');
+    u[name] = gl.getUniformLocation(p, name);
+  }
+  return { p, u };
+}
+function glTextur(w, h, ifmt, filter) {
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, ifmt, w, h);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+function glFbo(texturen) {
+  const f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  texturen.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0));
+  gl.drawBuffers(texturen.map((_, i) => gl.COLOR_ATTACHMENT0 + i));
+  return f;
+}
+function glBinde(einheit, tex) { gl.activeTexture(gl.TEXTURE0 + einheit); gl.bindTexture(gl.TEXTURE_2D, tex); }
+function glVoll() { gl.bindVertexArray(leerVAO); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+// Prüft, ob in ein Float-Format gerendert werden kann
+function glFormatTest(ifmt) {
+  const t = glTextur(4, 4, ifmt, gl.NEAREST), f = glFbo([t]);
+  const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(f); gl.deleteTexture(t);
+  return ok;
+}
+
+/* ---------- Kontext anlegen (auch nach Kontextverlust erneut aufrufbar) ---------- */
+function glStart() {
+  gl = glc.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false,
+    powerPreference: 'high-performance', preserveDrawingBuffer: false });
+  if (!gl) { fatal('Dieser Browser unterstützt kein WebGL2. Bitte ein aktuelles Safari (iPadOS 15 oder neuer) verwenden.'); return false; }
+  const e32 = gl.getExtension('EXT_color_buffer_float');
+  const e16 = gl.getExtension('EXT_color_buffer_half_float');
+  const nur16 = /[?&]f16/.test(location.search);       // zum Testen des Fallbacks: ?f16 an die Adresse hängen
+  if (e32 && !nur16 && glFormatTest(gl.RGBA32F)) { GLF.ifmt = gl.RGBA32F; GLF.name = 'RGBA32F'; GLF.halb = false; }
+  else if ((e32 || e16) && glFormatTest(gl.RGBA16F)) { GLF.ifmt = gl.RGBA16F; GLF.name = 'RGBA16F (Fallback)'; GLF.halb = true; }
+  else { fatal('Die Grafikeinheit kann nicht in Gleitkomma-Texturen rendern (EXT_color_buffer_float fehlt).'); return false; }
+  try {
+    P.schritt = glProgramm(VS_VOLL, FS_SCHRITT);
+    P.kraft = glProgramm(VS_VOLL, FS_KRAFT);
+    P.summe = glProgramm(VS_VOLL, FS_SUMME);
+    P.partikel = glProgramm(VS_PARTIKEL, FS_NICHTS, ['vP']);
+    P.pzeichnen = glProgramm(VS_PZEICHNEN, FS_PZEICHNEN);
+    P.schweif = glProgramm(VS_VOLL, FS_SCHWEIF);
+    P.rauch = glProgramm(VS_VOLL, FS_RAUCH);
+    P.anzeige = glProgramm(VS_VOLL, FS_ANZEIGE);
+  } catch (err) { fatal('Die Shader konnten nicht übersetzt werden.', String(err.message || err)); return false; }
+  leerVAO = gl.createVertexArray();
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  $('#gl-info').textContent = 'Grafik: WebGL2, ' + GLF.name;
+  return true;
+}
+/* =====================================================================
+   4  LÖSER – Gitter, Hindernismaske, Zeitschritt, Kräfte
+   ===================================================================== */
+const L = {
+  A: null, B: null,            // Ping-Pong-Zustände: { t: [3 Texturen], f: Framebuffer }
+  kraftT: null, kraftF: null,  // Kraft pro Zelle
+  kette: [],                   // Reduktionsstufen bis 1×1
+  maskeT: null, pbo: null, sync: null, puffer: new Float32Array(4),
+  alt: [],                     // freizugebende GL-Objekte der letzten Gittergröße
+};
+const maskeC = document.createElement('canvas');             // Hindernismaske in Simulationsauflösung
+const mctx = maskeC.getContext('2d', { willReadFrequently: true });
+const kratzC = document.createElement('canvas');             // Zwischenbild für Objekte mit Radierspuren
+const kctx = kratzC.getContext('2d');
+let maskeAlt = true, geoAlt = true, geoZeit = 0;
+let PROBEN = [];                                             // Kraft-Messwerte { t, fx, fy, sx, sy, u }
+let stossAkt = null;                                         // "Strömung anstoßen": { x, y, vx, vy } in Zellen
+
+/* ---------- Simulierter Bereich: ganzes Blatt oder (anteilig) der sichtbare Ausschnitt ---------- */
+function simRechteck() {
+  const voll = { x: 0, y: 0, w: DOK.breite, h: DOK.hoehe };
+  if (DOK.bereich >= 0.999) return voll;
+  const a = ST.ansicht, s = sichtFeld();
+  // sichtbarer Teil des Blatts in Dokumentkoordinaten
+  const x0 = klemme((s.l - a.ox) / a.k, 0, DOK.breite), x1 = klemme((s.r - a.ox) / a.k, 0, DOK.breite);
+  const y0 = klemme((s.o - a.oy) / a.k, 0, DOK.hoehe), y1 = klemme((s.u - a.oy) / a.k, 0, DOK.hoehe);
+  if (x1 - x0 < DOK.breite * 0.01 || y1 - y0 < DOK.hoehe * 0.01) return voll;                // Blatt nicht im Bild
+  const b = DOK.bereich, mix = (p, q) => p + (q - p) * b;   // 0 = Ausschnitt, 1 = ganze Fläche
+  const r = { x: mix(x0, 0), y: mix(y0, 0) };
+  r.w = mix(x1, DOK.breite) - r.x; r.h = mix(y1, DOK.hoehe) - r.y;
+  return r;
+}
+
+/* ---------- Gitter neu anlegen (Qualität, Blattgröße, Anströmseite oder Bereich geändert) ---------- */
+function simAufbauen() {
+  if (!gl) return;
+  const r = (SIM.rect = simRechteck());
+  const ls = istQuer() ? r.h : r.w, lt = istQuer() ? r.w : r.h;      // Länge in und quer zur Strömung
+  SIM.dx = Math.max(ls, lt) / QUAL[DOK.qualitaet].zellen;
+  SIM.nx = Math.max(16, Math.round(ls / SIM.dx)); SIM.ny = Math.max(16, Math.round(lt / SIM.dx));
+  SIM.dokUV = dokZuUV(DOK.seite, r);
+  // alte Texturen freigeben
+  for (const o of L.alt) { if (o instanceof WebGLTexture) gl.deleteTexture(o); else gl.deleteFramebuffer(o); }
+  L.alt = [];
+  const merke = (o) => (L.alt.push(o), o);
+  const zustand = () => { const t = [0, 1, 2].map(() => merke(glTextur(SIM.nx, SIM.ny, GLF.ifmt, gl.NEAREST))); return { t, f: merke(glFbo(t)) }; };
+  L.A = zustand(); L.B = zustand();
+  L.kraftT = merke(glTextur(SIM.nx, SIM.ny, GLF.ifmt, gl.NEAREST)); L.kraftF = merke(glFbo([L.kraftT]));
+  L.kette = [];
+  for (let w = SIM.nx, h = SIM.ny; w > 1 || h > 1;) {
+    w = Math.ceil(w / 4); h = Math.ceil(h / 4);
+    const t = merke(glTextur(w, h, GLF.ifmt, gl.NEAREST)); L.kette.push({ t, f: merke(glFbo([t])), w, h });
+  }
+  if (!L.maskeT) {
+    L.maskeT = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, L.maskeT);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    L.pbo = gl.createBuffer(); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, L.pbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, 16, gl.STREAM_READ); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+  }
+  if (L.sync) { gl.deleteSync(L.sync); L.sync = null; }
+  maskeC.width = kratzC.width = SIM.nx; maskeC.height = kratzC.height = SIM.ny;
+  rauchAufbauen();
+  maskeZeichnen(); geometrieMessen();
+  stroemungReset();
+  if (typeof ansichtBegrenzen === 'function') ansichtBegrenzen();
+  ovAlt = true;
+}
+
+/* ---------- Strömung zurücksetzen: Ruhe, Einlass fährt neu hoch ---------- */
+function stroemungReset() {
+  if (!L.A) return;
+  gl.clearColor(0, 0, 0, 0);
+  for (const z of [L.A, L.B]) { gl.bindFramebuffer(gl.FRAMEBUFFER, z.f); gl.clear(gl.COLOR_BUFFER_BIT); }
+  SIM.uEin = 0; SIM.schritte = 0; PROBEN = [];
+  rauchLeeren(); schweifLeeren();
+}
+
+/* ---------- Hindernismaske aus den Vektorobjekten rastern ----------
+   Rot = fest, Grün = gehört zur Lasso-Auswahl. Schwelle im Shader: > 0,3 (konservativ: angeschnittene Zellen zählen als fest). */
+function maskeZeichnen() {
+  mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.globalCompositeOperation = 'source-over';
+  mctx.fillStyle = '#000'; mctx.fillRect(0, 0, SIM.nx, SIM.ny);
+  const M = aff.mul([SIM.nx, 0, 0, SIM.ny, 0, 0], SIM.dokUV);
+  objekteZeichnen(mctx, M, { maske: true, kratz: kratzC, kctx, W: SIM.nx, H: SIM.ny,
+    farbe: (o) => (ST.auswahl.has(o.id) ? '#ffff00' : '#ff0000') });
+  gl.bindTexture(gl.TEXTURE_2D, L.maskeT);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, maskeC);
+  maskeAlt = false; geoAlt = true; PROBEN = [];
+}
+/* ---------- Bezugslängen aus der Maske messen: Stirnhöhe = belegte Zeilen quer zur Strömung, Sehne = Ausdehnung längs ---------- */
+function geometrieMessen() {
+  const nx = SIM.nx, ny = SIM.ny, d = mctx.getImageData(0, 0, nx, ny).data;
+  const g = { stirn: 0, sehne: 0, stirnSel: 0, sehneSel: 0 };
+  let s0 = nx, s1 = -1, a0 = nx, a1 = -1;
+  for (let j = 0; j < ny; j++) {
+    let zeile = false, zeileSel = false;
+    for (let i = 0, k = j * nx * 4; i < nx; i++, k += 4) {
+      if (d[k] > 76) {
+        zeile = true; if (i < s0) s0 = i; if (i > s1) s1 = i;
+        if (d[k + 1] > 76) { zeileSel = true; if (i < a0) a0 = i; if (i > a1) a1 = i; }
+      }
+    }
+    if (zeile) g.stirn++; if (zeileSel) g.stirnSel++;
+  }
+  g.sehne = s1 >= s0 ? s1 - s0 + 1 : 0; g.sehneSel = a1 >= a0 ? a1 - a0 + 1 : 0;
+  SIM.geo = g; geoAlt = false; geoZeit = performance.now();
+  physikAktualisieren();
+}
+
+/* ---------- Physikalische Skala -> Gittergrößen ----------
+   Re_phys = U·L/ν. Die Gitterviskosität wird so gewählt, dass Re_sim = Re_phys gilt; unterhalb von nuMin wird gedeckelt. */
+function physikAktualisieren() {
+  const g = SIM.geo || { stirn: 0, sehne: 0, stirnSel: 0, sehneSel: 0 };
+  const zellen = DOK.bezug === 'sehne' ? g.sehne : g.stirn;
+  const zellenSel = DOK.bezug === 'sehne' ? g.sehneSel : g.stirnSel;
+  SIM.lref = zellen * SIM.dx; SIM.lrefSel = zellenSel * SIM.dx;
+  // ohne Hindernis zählt die Kanalhöhe als Bezug für die Viskosität
+  const lz = zellen > 0 ? zellen : SIM.ny, lm = lz * SIM.dx;
+  const rePhys = DOK.U * lm / MEDIEN[DOK.medium].nu;
+  let u = U_GITTER, nu = u * lz / rePhys;
+  if (nu > NU_MAX) { u = Math.max(0.01, rePhys * NU_MAX / lz); nu = NU_MAX; }   // sehr zähe Strömung: langsamer rechnen
+  if (nu < SIM.nuMin) nu = SIM.nuMin;                                           // Deckel für hohe Reynolds-Zahlen
+  SIM.uZiel = u; SIM.tau = 3 * nu + 0.5;
+  SIM.reSim = u * lz / nu;
+  SIM.rePhys = zellen > 0 ? rePhys : NaN;
+  if (!(zellen > 0)) SIM.reSim = NaN;
+  SIM.gedeckelt = zellen > 0 && Math.abs(SIM.reSim / rePhys - 1) > 0.03;
+}
+
+/* ---------- n Zeitschritte rechnen ---------- */
+function loeserSchritte(n) {
+  if (n <= 0) return;
+  const u = P.schritt.u;
+  gl.useProgram(P.schritt.p);
+  gl.viewport(0, 0, SIM.nx, SIM.ny);
+  gl.uniform1i(u.uF0, 0); gl.uniform1i(u.uF1, 1); gl.uniform1i(u.uF2, 2); gl.uniform1i(u.uMaske, 3);
+  gl.uniform2i(u.uN, SIM.nx, SIM.ny);
+  gl.uniform1f(u.uTau, SIM.tau);
+  gl.uniform1i(u.uHaft, DOK.waende === 'haft' ? 1 : 0);
+  gl.uniform1f(u.uSmag, 18 * Math.SQRT2 * 0.02);                 // Cs² = 0,02  (Cs ≈ 0,14)
+  gl.uniform1f(u.uSchwamm, Math.max(8, SIM.nx * 0.04));
+  if (stossAkt) { gl.uniform4f(u.uStoss, stossAkt.x, stossAkt.y, stossAkt.vx, stossAkt.vy); gl.uniform1f(u.uStossR, stossAkt.r); }
+  else gl.uniform1f(u.uStossR, 0);
+  glBinde(3, L.maskeT);
+  const dU = U_GITTER / 1500;                                     // sanftes Hochfahren über ~1500 Schritte
+  for (let i = 0; i < n; i++) {
+    const du = klemme(SIM.uZiel - SIM.uEin, -dU, dU);
+    SIM.uEin += du;
+    gl.uniform1f(u.uUein, SIM.uEin); gl.uniform1f(u.uBeschl, du);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, L.B.f);
+    glBinde(0, L.A.t[0]); glBinde(1, L.A.t[1]); glBinde(2, L.A.t[2]);
+    glVoll();
+    const t = L.A; L.A = L.B; L.B = t;
+  }
+  SIM.schritte += n;
+}
+
+/* ---------- Kräfte: auf der GPU berechnen und summieren, asynchron zurücklesen ---------- */
+function kraftMessen() {
+  if (L.sync) return;                                             // letzte Messung noch unterwegs
+  gl.useProgram(P.kraft.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, L.kraftF); gl.viewport(0, 0, SIM.nx, SIM.ny);
+  glBinde(0, L.A.t[0]); glBinde(1, L.A.t[1]); glBinde(2, L.A.t[2]); glBinde(3, L.maskeT);
+  const u = P.kraft.u;
+  gl.uniform1i(u.uF0, 0); gl.uniform1i(u.uF1, 1); gl.uniform1i(u.uF2, 2); gl.uniform1i(u.uMaske, 3); gl.uniform2i(u.uN, SIM.nx, SIM.ny);
+  glVoll();
+  gl.useProgram(P.summe.p); gl.uniform1i(P.summe.u.uT, 0);
+  let quelle = L.kraftT, qw = SIM.nx, qh = SIM.ny;
+  for (const k of L.kette) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, k.f); gl.viewport(0, 0, k.w, k.h);
+    glBinde(0, quelle); gl.uniform2i(P.summe.u.uQ, qw, qh); glVoll();
+    quelle = k.t; qw = k.w; qh = k.h;
+  }
+  // 1×1-Ergebnis in einen Pixel-Buffer lesen; abgeholt wird es erst, wenn die GPU fertig ist (fenceSync)
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, L.pbo);
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, 0);
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+  L.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); L.syncU = SIM.uZiel; L.syncSchritt = SIM.schritte;
+  gl.flush();
+}
+function kraftAbholen() {
+  if (!L.sync) return;
+  const s = gl.clientWaitSync(L.sync, 0, 0);
+  if (s === gl.TIMEOUT_EXPIRED) return;
+  gl.deleteSync(L.sync); L.sync = null;
+  if (s === gl.WAIT_FAILED) return;
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, L.pbo); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, L.puffer); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+  const f = L.puffer;
+  if (!isFinite(f[0]) || !isFinite(f[1]) || Math.abs(f[0]) > 1e20) { instabil(); return; }
+  if (SIM.uEin < SIM.uZiel * 0.999 || maskeAlt) return;           // während des Hochfahrens nicht werten
+  PROBEN.push({ t: performance.now(), fx: f[0], fy: f[1], sx: f[2], sy: f[3], u: L.syncU });
+  if (PROBEN.length > 400) PROBEN.splice(0, PROBEN.length - 400);
+}
+/* Mittelwert und Standardabweichung der Beiwerte über das Mittelungsfenster.
+   Cd = F_x / (½·ρ·u²·L) in Gittereinheiten (ρ = 1); die physikalische Kraft folgt daraus mit ½·ρ·U²·L·Tiefe. */
+function kraftStatistik(auswahl) {
+  const jetzt = performance.now(), fenster = DOK.fenster * 1000;
+  const lz = (auswahl ? SIM.lrefSel : SIM.lref) / SIM.dx;
+  if (!(lz > 0)) return null;
+  const vz = AUFTRIEB_VZ[DOK.seite];
+  let n = 0, sd = 0, sl = 0, qd = 0, ql = 0;
+  for (const p of PROBEN) {
+    if (jetzt - p.t > fenster) continue;
+    const q = 0.5 * p.u * p.u * lz;
+    const cd = (auswahl ? p.sx : p.fx) / q, cl = vz * (auswahl ? p.sy : p.fy) / q;
+    n++; sd += cd; sl += cl; qd += cd * cd; ql += cl * cl;
+  }
+  if (n < 2) return null;
+  const cd = sd / n, cl = sl / n;
+  const staudruck = 0.5 * MEDIEN[DOK.medium].rho * DOK.U * DOK.U;      // Pa
+  const proM = staudruck * (auswahl ? SIM.lrefSel : SIM.lref);          // N/m je Beiwert-Einheit
+  return { cd, cl, cdS: Math.sqrt(Math.max(0, qd / n - cd * cd)), clS: Math.sqrt(Math.max(0, ql / n - cl * cl)), proM, n };
+}
+/* ---------- Instabilität: zurücksetzen, etwas mehr Viskosität als Sicherheitsabstand ---------- */
+function instabil() {
+  SIM.nuMin = Math.min(SIM.nuMin * 1.6, 0.01);
+  physikAktualisieren(); stroemungReset();
+  toast('Simulation wurde instabil und neu gestartet (Dämpfung erhöht).', 3500);
+}
+/* =====================================================================
+   5  DARSTELLUNG – Partikel, Rauch, Druckfeld, Geschwindigkeit
+   ===================================================================== */
+// Farbskalen als Stützstellen [Position 0..1, Farbe]. Daraus entstehen die GPU-Tabelle und der Balken der Legende.
+const FARBEN = {
+  partikel: [[0, '#04233f'], [0.3, '#0a6fb4'], [0.58, '#17cfe6'], [0.8, '#4dffb4'], [1, '#eaffd9']],
+  rauch:    [[0, '#000000'], [0.45, '#2f7f96'], [1, '#e6fbff']],
+  druck:    [[0, '#8fe8ff'], [0.22, '#2a70dd'], [0.5, '#0b0f15'], [0.78, '#d2343b'], [1, '#ffd58a']],
+  tempo:    ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'].map((c, i) => [i / 9, c]),
+};
+const MODI = { partikel: 0, rauch: 1, druck: 2, tempo: 3 };
+const V_SKALA = 1.6;       // Farbskala Geschwindigkeit reicht bis 1,6·U
+const P_SKALA = 1.5;       // Farbskala Druck reicht bis ±1,5 Staudrücke
+const D = {
+  lut: {}, puf: [], updVAO: [], zVAO: [], tf: null, pi: 0,
+  schweif: [], si: 0, rauch: [], ri: 0, dpr: 1, W: 0, H: 0, vorAnsicht: null, saat: 1,
+};
+
+function hexRgb(h) { return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); }
+function farbTabelle(stops) {                         // 256×1-Textur aus den Stützstellen
+  const d = new Uint8Array(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255; let k = 0;
+    while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    const a = stops[k], b = stops[k + 1], f = klemme((t - a[0]) / (b[0] - a[0]), 0, 1), ca = hexRgb(a[1]), cb = hexRgb(b[1]);
+    for (let c = 0; c < 3; c++) d[i * 4 + c] = Math.round(ca[c] + (cb[c] - ca[c]) * f);
+    d[i * 4 + 3] = 255;
+  }
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, d);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+const farbVerlauf = (stops) => 'linear-gradient(90deg,' + stops.map((s) => s[1] + ' ' + (s[0] * 100).toFixed(0) + '%').join(',') + ')';
+
+/* ---------- Einmalige Einrichtung ---------- */
+function darstellungStart() {
+  for (const k in FARBEN) D.lut[k] = farbTabelle(FARBEN[k]);
+  // Partikel: zwei Puffer im Wechsel (Transform Feedback)
+  const d = new Float32Array(N_PARTIKEL * 4);
+  for (let i = 0; i < N_PARTIKEL; i++) { d[i * 4] = Math.random(); d[i * 4 + 1] = Math.random(); d[i * 4 + 2] = Math.random() * 3; d[i * 4 + 3] = 1.5 + Math.random() * 4.5; }
+  const aP = gl.getAttribLocation(P.partikel.p, 'aP'), aA = gl.getAttribLocation(P.pzeichnen.p, 'aA'), aB = gl.getAttribLocation(P.pzeichnen.p, 'aB');
+  D.puf = [0, 1].map(() => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, d, gl.DYNAMIC_COPY); return b; });
+  D.updVAO = []; D.zVAO = [];
+  for (let i = 0; i < 2; i++) {
+    const v = gl.createVertexArray(); gl.bindVertexArray(v);
+    gl.bindBuffer(gl.ARRAY_BUFFER, D.puf[i]); gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 4, gl.FLOAT, false, 0, 0);
+    D.updVAO.push(v);
+    const z = gl.createVertexArray(); gl.bindVertexArray(z);                 // alt = Puffer i, neu = Puffer 1−i
+    gl.bindBuffer(gl.ARRAY_BUFFER, D.puf[i]); gl.enableVertexAttribArray(aA); gl.vertexAttribPointer(aA, 4, gl.FLOAT, false, 0, 0); gl.vertexAttribDivisor(aA, 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, D.puf[1 - i]); gl.enableVertexAttribArray(aB); gl.vertexAttribPointer(aB, 4, gl.FLOAT, false, 0, 0); gl.vertexAttribDivisor(aB, 1);
+    D.zVAO.push(z);
+  }
+  gl.bindVertexArray(null); gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  D.tf = gl.createTransformFeedback();
+  D.schweif = []; D.rauch = []; D.W = 0;
+}
+/* ---------- Zeichenfläche an Fenstergröße anpassen ---------- */
+function glGroesse() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = Math.max(2, Math.round(window.innerWidth * dpr)), H = Math.max(2, Math.round(window.innerHeight * dpr));
+  if (W === D.W && H === D.H) return;
+  D.W = glc.width = W; D.H = glc.height = H; D.dpr = dpr;
+  for (const s of D.schweif) { gl.deleteTexture(s.t); gl.deleteFramebuffer(s.f); }
+  D.schweif = [0, 1].map(() => { const t = glTextur(W, H, gl.RGBA8, gl.LINEAR); return { t, f: glFbo([t]) }; });
+  schweifLeeren();
+}
+function schweifLeeren() {
+  if (!gl) return;
+  gl.clearColor(0, 0, 0, 1);
+  for (const s of D.schweif) { gl.bindFramebuffer(gl.FRAMEBUFFER, s.f); gl.clear(gl.COLOR_BUFFER_BIT); }
+  D.vorAnsicht = null;
+}
+function rauchAufbauen() {
+  for (const s of D.rauch) { gl.deleteTexture(s.t); gl.deleteFramebuffer(s.f); }
+  const f = SIM.nx > 1000 ? 1 : 2;                                      // Farbstoff doppelt so fein wie das Gitter
+  D.rauchGr = [SIM.nx * f, SIM.ny * f];
+  D.rauch = [0, 1].map(() => { const t = glTextur(D.rauchGr[0], D.rauchGr[1], gl.RGBA8, gl.LINEAR); return { t, f: glFbo([t]) }; });
+}
+function rauchLeeren() {
+  if (!gl) return;
+  gl.clearColor(0, 0, 0, 1);
+  for (const s of D.rauch) { gl.bindFramebuffer(gl.FRAMEBUFFER, s.f); gl.clear(gl.COLOR_BUFFER_BIT); }
+}
+
+/* ---------- Abbildungen Bildschirm <-> Simulations-UV ---------- */
+function uvZuPx() { const a = ST.ansicht; return aff.mul([a.k, 0, 0, a.k, a.ox, a.oy], aff.inv(SIM.dokUV)); }
+function sichtbaresUV() {                              // sichtbarer Bereich in UV, etwas erweitert
+  const M = aff.inv(uvZuPx()), w = window.innerWidth, h = window.innerHeight;
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+  for (const [x, y] of [[0, 0], [w, 0], [0, h], [w, h]]) { const p = aff.pt(M, x, y); x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+  x0 = klemme(x0 - 0.02, 0, 1); y0 = klemme(y0 - 0.02, 0, 1); x1 = klemme(x1 + 0.02, 0, 1); y1 = klemme(y1 + 0.02, 0, 1);
+  return x1 - x0 < 1e-4 || y1 - y0 < 1e-4 ? [0, 0, 1, 1] : [x0, y0, x1, y1];
+}
+
+// Partikelzahl passend zur Bildschirmfläche: einzelne Stromfäden sollen erkennbar bleiben
+const partikelZahl = () => Math.round(klemme(window.innerWidth * window.innerHeight / 240, 1500, N_PARTIKEL));
+
+/* ---------- Ein Bild zeichnen ---------- */
+function darstellen(dt, schritte) {
+  const W = D.W, H = D.H, a = ST.ansicht, M = uvZuPx();
+  if (ST.modus === 'partikel') {
+    // 1) Partikel bewegen
+    if (!ST.pause) {
+      const u = P.partikel.u; gl.useProgram(P.partikel.p);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);                 // sonst gilt die gelesene Textur als Rückkopplung
+      glBinde(0, L.A.t[2]); glBinde(1, L.maskeT);
+      gl.uniform1i(u.uF2, 0); gl.uniform1i(u.uMaske, 1); gl.uniform2i(u.uN, SIM.nx, SIM.ny);
+      gl.uniform1f(u.uWeg, schritte * ST.tempo); gl.uniform1f(u.uDt, dt);
+      gl.uniform4fv(u.uRect, sichtbaresUV()); gl.uniform1ui(u.uSaat, D.saat++);
+      gl.bindVertexArray(D.updVAO[D.pi]);
+      gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, D.tf);
+      gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, D.puf[1 - D.pi]);
+      gl.enable(gl.RASTERIZER_DISCARD);
+      gl.beginTransformFeedback(gl.POINTS); gl.drawArrays(gl.POINTS, 0, partikelZahl()); gl.endTransformFeedback();
+      gl.disable(gl.RASTERIZER_DISCARD);
+      gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+      gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+    }
+    // 2) Schweife: altes Bild abdunkeln, bei Pan/Zoom mitführen
+    const v = D.vorAnsicht || a, kk = v.k / a.k;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, D.schweif[1 - D.si].f); gl.viewport(0, 0, W, H);
+    gl.useProgram(P.schweif.p); glBinde(0, D.schweif[D.si].t);
+    gl.uniform1i(P.schweif.u.uT, 0); gl.uniform2f(P.schweif.u.uBild, W, H);
+    gl.uniform3f(P.schweif.u.uRe, kk, D.dpr * (v.ox - a.ox * kk), H * (1 - kk) - D.dpr * (v.oy - a.oy * kk));
+    gl.uniform1f(P.schweif.u.uFade, ST.pause ? 1 : Math.exp(-dt / 0.3)); gl.uniform1f(P.schweif.u.uAb, ST.pause ? 0 : 0.6 / 255);
+    glVoll();
+    D.vorAnsicht = { k: a.k, ox: a.ox, oy: a.oy };
+    // 3) neue Partikelstriche additiv dazu
+    if (!ST.pause) {
+      const u = P.pzeichnen.u; gl.useProgram(P.pzeichnen.p);
+      glBinde(0, L.A.t[2]); glBinde(1, D.lut.partikel);
+      gl.uniform1i(u.uF2, 0); gl.uniform1i(u.uLut, 1); gl.uniform2i(u.uN, SIM.nx, SIM.ny);
+      gl.uniformMatrix3fv(u.uUVpx, false, aff.mat3(M)); gl.uniform2f(u.uBild, window.innerWidth, window.innerHeight);
+      gl.uniform1f(u.uBreite, 1.4); gl.uniform1f(u.uVmax, SIM.uZiel * V_SKALA); gl.uniform1f(u.uHell, 0.6);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+      gl.bindVertexArray(D.zVAO[D.pi]); gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, partikelZahl());
+      gl.disable(gl.BLEND);
+      D.pi = 1 - D.pi;
+    }
+    D.si = 1 - D.si;
+  } else if (ST.modus === 'rauch' && schritte > 0) {
+    const u = P.rauch.u; gl.useProgram(P.rauch.p);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, D.rauch[1 - D.ri].f); gl.viewport(0, 0, D.rauchGr[0], D.rauchGr[1]);
+    glBinde(0, L.A.t[2]); glBinde(1, L.maskeT); glBinde(2, D.rauch[D.ri].t);
+    gl.uniform1i(u.uF2, 0); gl.uniform1i(u.uMaske, 1); gl.uniform1i(u.uD, 2);
+    gl.uniform2i(u.uN, SIM.nx, SIM.ny); gl.uniform2f(u.uGr, D.rauchGr[0], D.rauchGr[1]);
+    gl.uniform1f(u.uSchritte, schritte); gl.uniform1f(u.uStreifen, Math.max(4, Math.round(SIM.ny / 16)));
+    glVoll(); D.ri = 1 - D.ri;
+  }
+  // Ausgabe auf den Bildschirm
+  const u = P.anzeige.u; gl.useProgram(P.anzeige.p);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H);
+  glBinde(0, L.A.t[2]); glBinde(1, L.maskeT); glBinde(2, D.schweif[D.si].t); glBinde(3, D.rauch[D.ri].t); glBinde(4, D.lut[ST.modus]);
+  gl.uniform1i(u.uF2, 0); gl.uniform1i(u.uMaske, 1); gl.uniform1i(u.uSchweif, 2); gl.uniform1i(u.uD, 3); gl.uniform1i(u.uLut, 4);
+  gl.uniform2i(u.uN, SIM.nx, SIM.ny); gl.uniformMatrix3fv(u.uPxUV, false, aff.mat3(aff.inv(M)));
+  gl.uniform2f(u.uBild, W, H); gl.uniform1f(u.uDpr, D.dpr); gl.uniform1i(u.uModus, MODI[ST.modus]);
+  // Druck: (ρ−1)/3 ist der Gitterdruck; Skala ±P_SKALA·½u²  ->  ρ−1 = P_SKALA·1,5·u²
+  gl.uniform1f(u.uPmax, P_SKALA * 1.5 * SIM.uZiel * SIM.uZiel); gl.uniform1f(u.uVmax, SIM.uZiel * V_SKALA);
+  gl.uniform1f(u.uPxZelle, a.k * SIM.dx); gl.uniform1i(u.uMaskeAn, ST.maske ? 1 : 0);
+  glVoll();
+}
+/* =====================================================================
+   6  ANSICHT – Pan/Zoom, Vektor-Overlay (Objekte, Lineale)
+   ===================================================================== */
+const ov = $('#ov'), octx = ov.getContext('2d');
+const ovKratz = document.createElement('canvas'), ovKctx = ovKratz.getContext('2d');
+let ovAlt = true, ovDpr = 1;
+const LINEAL = 26;                                         // Breite der Lineale in px
+let SAFE = { o: 0, r: 0, u: 0, l: 0 };
+
+function safeLesen() {                                     // Safe Areas (Notch, Home-Indikator) aus CSS auslesen
+  const c = getComputedStyle($('#sonde'));
+  SAFE = { o: parseFloat(c.paddingTop) || 0, r: parseFloat(c.paddingRight) || 0, u: parseFloat(c.paddingBottom) || 0, l: parseFloat(c.paddingLeft) || 0 };
+}
+// nutzbarer Bildbereich ohne Lineale
+function sichtFeld() { return { l: SAFE.l + LINEAL, r: window.innerWidth - SAFE.r, o: SAFE.o, u: window.innerHeight - SAFE.u - LINEAL }; }
+function kEinpassen() {
+  const s = sichtFeld();
+  return Math.min((s.r - s.l - 28) / DOK.breite, (s.u - s.o - 62 - 22) / DOK.hoehe);
+}
+function ansichtEinpassen() {
+  const s = sichtFeld(), a = ST.ansicht;
+  a.k = kEinpassen();
+  a.ox = (s.l + s.r) / 2 - DOK.breite * a.k / 2;
+  a.oy = (s.o + 62 + s.u) / 2 - DOK.hoehe * a.k / 2;
+  ansichtGeaendert();
+}
+// größter Zoom: etwa 25 px je Simulationszelle (im Ausschnitt-Modus bezogen auf ein Viertel der Zellgröße des ganzen Blatts)
+function kMaximal() {
+  const dxVoll = Math.max(DOK.breite, DOK.hoehe) / QUAL[DOK.qualitaet].zellen;
+  return Math.max(kEinpassen(), 25 / (DOK.bereich < 0.999 ? dxVoll / 4 : dxVoll));
+}
+function ansichtBegrenzen() {
+  const s = sichtFeld(), a = ST.ansicht, kMin = kEinpassen(), kMax = kMaximal();
+  a.k = klemme(a.k, kMin, kMax);
+  const rand = 80;                                         // so viel Blatt bleibt mindestens sichtbar
+  a.ox = klemme(a.ox, s.l + rand - DOK.breite * a.k, s.r - rand);
+  a.oy = klemme(a.oy, s.o + rand - DOK.hoehe * a.k, s.u - rand);
+}
+function zoomUm(cx, cy, f) {
+  const a = ST.ansicht, kMin = kEinpassen(), kMax = kMaximal();
+  const k2 = klemme(a.k * f, kMin, kMax), g = k2 / a.k;
+  a.ox = cx - (cx - a.ox) * g; a.oy = cy - (cy - a.oy) * g; a.k = k2;
+  ansichtGeaendert();
+}
+function ansichtGeaendert() {
+  ansichtBegrenzen(); ovAlt = true;
+  if (DOK.bereich < 0.999) bereichGeplant();
+}
+const pxZuDok = (x, y) => [(x - ST.ansicht.ox) / ST.ansicht.k, (y - ST.ansicht.oy) / ST.ansicht.k];
+const dokZuPx = (x, y) => [x * ST.ansicht.k + ST.ansicht.ox, y * ST.ansicht.k + ST.ansicht.oy];
+
+/* ---------- Pfade ---------- */
+function pfad(ctx, p, zu, glatt) {
+  const n = p.length;
+  ctx.moveTo(p[0][0], p[0][1]);
+  if (!glatt || n < 3) for (let i = 1; i < n; i++) ctx.lineTo(p[i][0], p[i][1]);
+  else {                                                   // Freihand: quadratische Kurven durch die Mittelpunkte
+    for (let i = 1; i < n - 1; i++) ctx.quadraticCurveTo(p[i][0], p[i][1], (p[i][0] + p[i + 1][0]) / 2, (p[i][1] + p[i + 1][1]) / 2);
+    ctx.lineTo(p[n - 1][0], p[n - 1][1]);
+  }
+  if (zu) ctx.closePath();
+}
+// Ein Objekt zeichnen. T: lokale Koordinaten -> Canvas-Pixel, minB: Mindestbreite (2 Zellen) in lokalen Einheiten
+function einObjekt(ctx, o, T, farbe, minB, maske) {
+  ctx.setTransform(T[0], T[1], T[2], T[3], T[4], T[5]);
+  ctx.fillStyle = ctx.strokeStyle = farbe; ctx.lineCap = ctx.lineJoin = 'round';
+  const p = o.pts;
+  ctx.beginPath();
+  if (p.length === 1) { ctx.arc(p[0][0], p[0][1], Math.max(o.w, minB) / 2, 0, 6.2832); ctx.fill(); return; }
+  pfad(ctx, p, o.zu, o.art === 'frei');
+  if (o.zu) {
+    ctx.fill();
+    // Rand: Stiftbreite bei geschlossenen Freihandformen; in der Maske ein halber Zellrand, damit dünne Spitzen nicht verschwinden
+    const b = o.w > 0 ? Math.max(o.w, minB) : (maske ? minB / 2 : 0);
+    if (b > 0) { ctx.lineWidth = b; ctx.stroke(); }
+  } else { ctx.lineWidth = Math.max(o.w, minB); ctx.stroke(); }
+}
+/* Alle Objekte zeichnen – dieselbe Routine für Bildschirm (scharf, in Gerätepixeln) und Hindernismaske (Simulationsraster).
+   Radierspuren ("neg") werden pro Objekt in einem Zwischenbild abgezogen, damit sie nur dieses Objekt treffen. */
+function objekteZeichnen(ctx, M, opt) {
+  const minDok = 2 * SIM.dx;
+  for (const o of DOK.objekte) {
+    const T = aff.mul(M, o.m), minB = minDok / aff.skal(o.m), farbe = opt.farbe(o);
+    if (!o.neg.length) { einObjekt(ctx, o, T, farbe, minB, opt.maske); continue; }
+    const b = rahmenLokal(o), r = Math.max(o.w, minB) / 2 + minB;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const [x, y] of [[b[0] - r, b[1] - r], [b[2] + r, b[1] - r], [b[0] - r, b[3] + r], [b[2] + r, b[3] + r]]) {
+      const q = aff.pt(T, x, y); x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]);
+    }
+    x0 = Math.max(0, Math.floor(x0) - 1); y0 = Math.max(0, Math.floor(y0) - 1); x1 = Math.min(opt.W, Math.ceil(x1) + 1); y1 = Math.min(opt.H, Math.ceil(y1) + 1);
+    const w = x1 - x0, h = y1 - y0; if (w <= 0 || h <= 0) continue;
+    const k = opt.kctx;
+    k.save(); k.setTransform(1, 0, 0, 1, 0, 0); k.globalCompositeOperation = 'source-over'; k.globalAlpha = 1;
+    k.clearRect(x0, y0, w, h); k.beginPath(); k.rect(x0, y0, w, h); k.clip();
+    einObjekt(k, o, T, farbe, minB, opt.maske);
+    k.globalCompositeOperation = 'destination-out'; k.strokeStyle = k.fillStyle = '#000';
+    for (const n of o.neg) {
+      const nb = Math.max(n.w, minB);
+      k.beginPath();
+      if (n.pts.length === 1) { k.arc(n.pts[0][0], n.pts[0][1], nb / 2, 0, 6.2832); k.fill(); }
+      else { pfad(k, n.pts, false, true); k.lineWidth = nb; k.stroke(); }
+    }
+    k.restore();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(opt.kratz, x0, y0, w, h, x0, y0, w, h);
+  }
+}
+
+/* ---------- Overlay neu zeichnen (nur wenn sich etwas geändert hat) ---------- */
+function ovZeichnen() {
+  ovAlt = false;
+  const dpr = (ovDpr = Math.min(window.devicePixelRatio || 1, 2)), w = window.innerWidth, h = window.innerHeight;
+  const W = Math.round(w * dpr), H = Math.round(h * dpr);
+  if (ov.width !== W || ov.height !== H) { ov.width = ovKratz.width = W; ov.height = ovKratz.height = H; }
+  const c = octx, a = ST.ansicht;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, H);
+  const M = [a.k * dpr, 0, 0, a.k * dpr, a.ox * dpr, a.oy * dpr];
+  // Objekte: hellgrau, Auswahl türkis; bei eingeblendeter Maske durchscheinend
+  c.globalAlpha = ST.maske ? 0.4 : 1;
+  objekteZeichnen(c, M, { maske: false, kratz: ovKratz, kctx: ovKctx, W, H, farbe: (o) => (ST.auswahl.has(o.id) ? '#8cf2e6' : '#d3dde2') });
+  c.globalAlpha = 1;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Blattrand und Rand des simulierten Bereichs
+  c.lineWidth = 1; c.strokeStyle = 'rgba(255,255,255,.22)';
+  c.strokeRect(a.ox, a.oy, DOK.breite * a.k, DOK.hoehe * a.k);
+  if (DOK.bereich < 0.999) {
+    const r = SIM.rect; c.setLineDash([6, 5]); c.strokeStyle = 'rgba(53,224,208,.7)';
+    c.strokeRect(r.x * a.k + a.ox, r.y * a.k + a.oy, r.w * a.k, r.h * a.k); c.setLineDash([]);
+  }
+  einlassZeichnen(c);
+  if (typeof werkzeugOverlay === 'function') werkzeugOverlay(c);
+  linealeZeichnen(c, w, h);
+}
+// Drei kleine Pfeile am Einlass zeigen die Strömungsrichtung
+function einlassZeichnen(c) {
+  const M = uvZuPx();
+  c.strokeStyle = 'rgba(53,224,208,.75)'; c.lineWidth = 1.6; c.lineCap = c.lineJoin = 'round';
+  for (const t of [0.25, 0.5, 0.75]) {
+    const p = aff.pt(M, 0, t), q = aff.pt(M, 0.01, t);
+    const l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1, ex = (q[0] - p[0]) / l, ey = (q[1] - p[1]) / l;
+    const x = p[0] + ex * 6, y = p[1] + ey * 6;
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + ex * 16, y + ey * 16);
+    c.moveTo(x + ex * 10 - ey * 5, y + ey * 10 + ex * 5); c.lineTo(x + ex * 16, y + ey * 16); c.lineTo(x + ex * 10 + ey * 5, y + ey * 10 - ex * 5);
+    c.stroke();
+  }
+}
+/* ---------- Lineale links und unten in echten Einheiten (1-2-5-Raster, Einheit automatisch) ---------- */
+function linealeZeichnen(c, w, h) {
+  const s = sichtFeld(), a = ST.ansicht;
+  c.fillStyle = 'rgba(7,10,13,.88)';
+  c.fillRect(0, 0, s.l, h); c.fillRect(0, s.u, w, h - s.u);
+  const schritt = schritt125(84 / a.k);                      // beschriftete Striche mindestens 84 px auseinander
+  const mant = Math.round(schritt / Math.pow(10, Math.floor(Math.log10(schritt) + 1e-9)));
+  const klein = schritt / (mant === 2 ? 4 : 5);
+  const einheit = schritt < 0.00999 ? 'mm' : schritt < 0.999 ? 'cm' : 'm', f = 1 / EINHEIT_M[einheit];
+  c.font = '10.5px ui-monospace, Menlo, monospace'; c.fillStyle = '#93a4ae'; c.strokeStyle = 'rgba(147,164,174,.7)'; c.lineWidth = 1;
+  const txt = (v) => fz(Math.round(v * f * 1e6) / 1e6, 6);
+  c.beginPath();
+  // x-Achse: 0 an der linken Blattkante
+  c.textAlign = 'center'; c.textBaseline = 'top';
+  for (let i = Math.ceil((s.l - a.ox) / a.k / klein); ; i++) {
+    const x = i * klein * a.k + a.ox; if (x > s.r) break;
+    const gross = Math.abs(i * klein / schritt - Math.round(i * klein / schritt)) < 1e-6;
+    c.moveTo(Math.round(x) + 0.5, s.u); c.lineTo(Math.round(x) + 0.5, s.u + (gross ? 8 : 4));
+    if (gross && x > s.l + 14 && x < s.r - 30) c.fillText(txt(i * klein), x, s.u + 10);
+  }
+  // y-Achse: 0 an der unteren Blattkante, nach oben positiv
+  c.textAlign = 'right'; c.textBaseline = 'middle';
+  const yu = a.oy + DOK.hoehe * a.k;                          // Bildschirm-y der unteren Blattkante
+  for (let i = Math.ceil((yu - s.u) / a.k / klein); ; i++) {
+    const y = yu - i * klein * a.k; if (y < s.o + 60) break;
+    const gross = Math.abs(i * klein / schritt - Math.round(i * klein / schritt)) < 1e-6;
+    c.moveTo(s.l, Math.round(y) + 0.5); c.lineTo(s.l - (gross ? 8 : 4), Math.round(y) + 0.5);
+    if (gross && y < s.u - 8) { c.save(); c.translate(s.l - 11, y); c.rotate(-Math.PI / 2); c.textAlign = 'center'; c.textBaseline = 'bottom'; c.fillText(txt(i * klein), 0, 0); c.restore(); }
+  }
+  c.stroke();
+  c.strokeStyle = 'rgba(255,255,255,.12)'; c.beginPath(); c.moveTo(s.l + 0.5, 0); c.lineTo(s.l + 0.5, s.u + 0.5); c.lineTo(w, s.u + 0.5); c.stroke();
+  c.fillStyle = '#35e0d0'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(einheit, s.l / 2 + SAFE.l / 2, s.u + LINEAL / 2);
+}
+/* =====================================================================
+   7  OBJEKTE – Geometrie, Rückgängig/Wiederholen, Werkzeuge
+   Ein Objekt: { id, art, pts:[[x,y],…] (lokal, Meter), w (Strichbreite, 0 = nur Fläche), zu (geschlossen/gefüllt),
+                 neg:[{pts,w}] (Radierspuren, lokal), m:[a,b,c,d,e,f] (Lage: affine Abbildung lokal -> Dokument) }
+   Objekte werden nie nachträglich verändert, sondern durch Kopien ersetzt – so sind Undo-Schnappschüsse billig.
+   ===================================================================== */
+const rahmenCache = new WeakMap();
+function rahmenLokal(o) {                                   // umschließendes Rechteck der Punkte (lokal)
+  const c = rahmenCache.get(o);
+  if (c && c.n === o.pts.length) return c.b;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of o.pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+  const b = [x0, y0, x1, y1]; rahmenCache.set(o, { n: o.pts.length, b }); return b;
+}
+function rahmenDok(o) {                                     // umschließendes Rechteck im Dokument (inkl. Strichbreite)
+  const b = rahmenLokal(o), T = o.m, r = Math.max(o.w, 2 * SIM.dx / aff.skal(o.m)) / 2;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of [[b[0] - r, b[1] - r], [b[2] + r, b[1] - r], [b[0] - r, b[3] + r], [b[2] + r, b[3] + r]]) {
+    const q = aff.pt(T, x, y); x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]);
+  }
+  return [x0, y0, x1, y1];
+}
+function punktInPolygon(p, x, y) {
+  let innen = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    if ((p[i][1] > y) !== (p[j][1] > y) && x < (p[j][0] - p[i][0]) * (y - p[i][1]) / (p[j][1] - p[i][1]) + p[i][0]) innen = !innen;
+  }
+  return innen;
+}
+function abstandStrecke2(x, y, a, b) {                      // Abstandsquadrat Punkt–Strecke
+  const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+  const t = l2 > 0 ? klemme(((x - a[0]) * dx + (y - a[1]) * dy) / l2, 0, 1) : 0;
+  const ex = x - a[0] - t * dx, ey = y - a[1] - t * dy; return ex * ex + ey * ey;
+}
+// Abstand eines Dokumentpunkts zum Objekt in Metern (0 = innerhalb der Fläche bzw. auf dem Strich)
+function abstandObjekt(o, x, y) {
+  const q = aff.pt(aff.inv(o.m), x, y), p = o.pts, sk = aff.skal(o.m);
+  if (o.zu && punktInPolygon(p, q[0], q[1])) return 0;
+  let d2 = Infinity;
+  if (p.length === 1) d2 = (q[0] - p[0][0]) ** 2 + (q[1] - p[0][1]) ** 2;
+  for (let i = 1; i < p.length; i++) d2 = Math.min(d2, abstandStrecke2(q[0], q[1], p[i - 1], p[i]));
+  if (o.zu && p.length > 2) d2 = Math.min(d2, abstandStrecke2(q[0], q[1], p[p.length - 1], p[0]));
+  return Math.max(0, Math.sqrt(d2) - Math.max(o.w, 2 * SIM.dx / sk) / 2) * sk;
+}
+const EINS = () => [1, 0, 0, 1, 0, 0];
+
+/* ---------- Rückgängig / Wiederholen: Schnappschüsse der Objektliste ---------- */
+const UNDO = [], REDO = [];
+function merke() {                                          // vor jeder Änderung aufrufen
+  UNDO.push(DOK.objekte.slice()); if (UNDO.length > 120) UNDO.shift();
+  REDO.length = 0; undoKnoepfe();
+}
+function rueckgaengig() {
+  if (aktiv) return;
+  if (!UNDO.length) { toast('Nichts rückgängig zu machen', 1200); return; }
+  REDO.push(DOK.objekte); DOK.objekte = UNDO.pop(); nachUndo(); toast('Rückgängig', 900);
+}
+function wiederholen() {
+  if (aktiv) return;
+  if (!REDO.length) { toast('Nichts zu wiederholen', 1200); return; }
+  UNDO.push(DOK.objekte); DOK.objekte = REDO.pop(); nachUndo(); toast('Wiederholt', 900);
+}
+function nachUndo() {
+  const ids = new Set(DOK.objekte.map((o) => o.id));
+  for (const id of ST.auswahl) if (!ids.has(id)) ST.auswahl.delete(id);
+  rahmenNeu();
+  undoKnoepfe(); geaendert();
+}
+function undoKnoepfe() { $('#kn-undo').disabled = !UNDO.length; $('#kn-redo').disabled = !REDO.length; }
+// Nach jeder Änderung an Objekten: Maske und Overlay neu, speichern einplanen
+function geaendert(speichern = true) {
+  maskeAlt = true; ovAlt = true;
+  if (speichern) speichernGeplant();
+}
+
+/* ---------- Werkzeuge ----------
+   Jedes Werkzeug hat start/zug/ende (Stift aufgesetzt, bewegt, abgehoben). Koordinaten in Dokument-Metern. */
+let aktiv = null;                                           // laufende Stiftgeste
+const strichMin = () => 2 * SIM.dx;                         // nichts dünner als 2 Zellen
+const strichBreite = () => Math.max(DOK.strich, strichMin());
+const radGroesse = () => Math.max(DOK.radGr, strichMin());
+
+const WERKZEUGE = {
+  /* --- Freihand: der Strich ist vom ersten Punkt an ein Hindernis --- */
+  frei: {
+    start(p) {
+      merke();
+      const o = { id: DOK.nid++, art: 'frei', pts: [p], w: strichBreite(), zu: false, neg: [], m: EINS() };
+      DOK.objekte.push(o); aktiv = { o, glatt: p, roh: p }; geaendert(false);
+    },
+    zug(p) {
+      const g = aktiv.glatt, o = aktiv.o, l = o.pts[o.pts.length - 1];
+      aktiv.roh = p;
+      const n = (aktiv.glatt = [g[0] + (p[0] - g[0]) * 0.55, g[1] + (p[1] - g[1]) * 0.55]);   // leichte Glättung
+      const minD = Math.max(0.6 * SIM.dx, 1.5 / ST.ansicht.k);
+      if (Math.hypot(n[0] - l[0], n[1] - l[1]) >= minD) { o.pts.push(n); geaendert(false); }
+    },
+    ende() {
+      const o = aktiv.o, p = o.pts, l = p[p.length - 1], r = aktiv.roh;
+      if (Math.hypot(r[0] - l[0], r[1] - l[1]) > 0.3 * SIM.dx) p.push(r);
+      // Ende nahe am Anfang -> gefüllte, feste Form
+      if (DOK.autoZu && p.length >= 8) {
+        const nah = Math.max(2.5 * o.w, 16 / ST.ansicht.k);
+        let lang = 0; for (let i = 1; i < p.length; i++) lang += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+        if (Math.hypot(p[0][0] - r[0], p[0][1] - r[1]) < nah && lang > 5 * nah) o.zu = true;
+      }
+      geaendert();
+    },
+  },
+  /* --- Radierer --- */
+  radierer: {
+    start(p) { aktiv = { vor: p, gemerkt: false, spur: new Map() }; this.zug(p); },
+    zug(p) {
+      const a = aktiv;
+      if (ST.radModus === 'strich') {
+        // Strichradierer: jedes berührte Objekt ganz löschen
+        const r = 9 / ST.ansicht.k, rest = DOK.objekte.filter((o) => abstandObjekt(o, p[0], p[1]) > r);
+        if (rest.length !== DOK.objekte.length) { if (!a.gemerkt) { merke(); a.gemerkt = true; } DOK.objekte = rest; nachUndo(); }
+      } else {
+        // Präzisionsradierer: Spur als "negativen Strich" in lokalen Koordinaten an jedes berührte Objekt hängen
+        const r = radGroesse() / 2;
+        for (let i = 0; i < DOK.objekte.length; i++) {
+          const o = DOK.objekte[i], inv = aff.inv(o.m);
+          let n = a.spur.get(o.id);
+          if (n) { n.pts.push(aff.pt(inv, p[0], p[1])); geaendert(false); continue; }
+          const b = rahmenDok(o);
+          if (p[0] < b[0] - r || p[0] > b[2] + r || p[1] < b[1] - r || p[1] > b[3] + r) continue;
+          if (abstandObjekt(o, p[0], p[1]) > r) continue;
+          if (!a.gemerkt) { merke(); a.gemerkt = true; }
+          n = { pts: [aff.pt(inv, a.vor[0], a.vor[1]), aff.pt(inv, p[0], p[1])], w: 2 * r / aff.skal(o.m) };
+          const kopie = Object.assign({}, o, { neg: o.neg.concat([n]) });
+          DOK.objekte[i] = kopie; a.spur.set(o.id, n); geaendert(false);
+        }
+      }
+      a.vor = p;
+    },
+    ende() { if (aktiv.gemerkt) geaendert(); },
+  },
+};
+function werkzeugSetzen(w) {
+  if (aktiv) return;
+  if (w !== 'radierer') ST.vorWerkzeug = w;
+  if (ST.werkzeug === 'lasso' && w !== 'lasso' && ST.auswahl.size) { ST.auswahl.clear(); rahmenNeu(); geaendert(false); }
+  stossAkt = null;
+  ST.werkzeug = w; uiSync(); ovAlt = true;
+}
+/* Umschaltknopf (Ersatz für den Pencil-Doppeltipp): Zeichenwerkzeug <-> zuletzt benutzter Radierer */
+function umschalten() {
+  if (ST.werkzeug === 'radierer') werkzeugSetzen(ST.vorWerkzeug || 'frei');
+  else { ST.vorWerkzeug = ST.werkzeug; werkzeugSetzen('radierer'); }
+}
+// Vorschau-Cursor in Werkzeuggröße (Durchmesser in px; 0 = keiner)
+function zeigerGroesse() {
+  const k = ST.ansicht.k;
+  if (ST.werkzeug === 'frei') return Math.max(4, strichBreite() * k);
+  if (ST.werkzeug === 'radierer') return ST.radModus === 'strich' ? 18 : Math.max(6, radGroesse() * k);
+  if (ST.werkzeug === 'stoss') return 34;
+  if (ST.werkzeug === 'form') return 8;
+  return 0;
+}
+/* =====================================================================
+   7b  LASSO – Auswählen, Verschieben, Skalieren, Drehen, Zwischenablage
+   ===================================================================== */
+let SEL = null;                 // Auswahlrahmen { cx, cy, w, h, r } in Dokumentkoordinaten (r = Drehung des Rahmens)
+let ZWISCHEN = null;            // Zwischenablage (Liste von Objekten)
+const GRIFF_ABSTAND = 34;       // Abstand des Drehgriffs vom Rahmen in px
+
+const drehM = (r) => [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0];
+const um = (x, y, M) => aff.mul([1, 0, 0, 1, x, y], aff.mul(M, [1, 0, 0, 1, -x, -y]));   // Abbildung M um den Punkt (x, y)
+const gewaehlte = () => DOK.objekte.filter((o) => ST.auswahl.has(o.id));
+
+function rahmenNeu() {                                        // achsparalleler Rahmen um die Auswahl
+  const l = gewaehlte();
+  if (!l.length) { SEL = null; return; }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const o of l) { const b = rahmenDok(o); x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
+  SEL = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0, r: 0 };
+}
+function auswahlSetzen(ids) {
+  ST.auswahl = new Set(ids); rahmenNeu(); geaendert(false);
+}
+// Punkt im Rahmen-eigenen Koordinatensystem
+const imRahmen = (s, p) => aff.pt(drehM(-s.r), p[0] - s.cx, p[1] - s.cy);
+const ausRahmen = (s, x, y) => { const q = aff.pt(drehM(s.r), x, y); return [q[0] + s.cx, q[1] + s.cy]; };
+const ECKEN = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+// Welcher Griff liegt unter dem Punkt? 'dreh', Ecke 0–3, 'innen' oder null
+function griffBei(p) {
+  if (!SEL) return null;
+  const k = ST.ansicht.k, q = imRahmen(SEL, p), tol = 22 / k;
+  if (Math.hypot(q[0], q[1] + SEL.h / 2 + GRIFF_ABSTAND / k) < tol) return 'dreh';
+  for (let i = 0; i < 4; i++) if (Math.hypot(q[0] - ECKEN[i][0] * SEL.w / 2, q[1] - ECKEN[i][1] * SEL.h / 2) < tol) return i;
+  if (Math.abs(q[0]) <= SEL.w / 2 + 6 / k && Math.abs(q[1]) <= SEL.h / 2 + 6 / k) return 'innen';
+  return null;
+}
+// Abbildung G auf die Auswahl anwenden (immer ausgehend vom Zustand bei Gestenbeginn)
+function auswahlAbbilden(a, G, selNeu) {
+  if (!a.gemerkt) { merke(); a.gemerkt = true; }
+  DOK.objekte = DOK.objekte.map((o) => { const u = a.orig.get(o.id); return u ? Object.assign({}, u, { m: aff.mul(G, u.m) }) : o; });
+  SEL = selNeu; geaendert(false);
+}
+const origKarte = () => new Map(gewaehlte().map((o) => [o.id, o]));
+const gradAnzeige = (r) => { let g = -r * 180 / Math.PI; g = ((g + 180) % 360 + 360) % 360 - 180; return Math.round(g * 10) / 10 + 0; };   // gegen den Uhrzeigersinn positiv
+
+WERKZEUGE.lasso = {
+  start(p) {
+    const g = griffBei(p);
+    if (g !== null) aktiv = { art: g, p0: p, s0: Object.assign({}, SEL), orig: origKarte(), gemerkt: false };
+    else aktiv = { art: 'pfad', pts: [p] };
+    ovAlt = true;
+  },
+  zug(p) {
+    const a = aktiv, s = a.s0;
+    if (a.art === 'pfad') {
+      const l = a.pts[a.pts.length - 1];
+      if (Math.hypot(p[0] - l[0], p[1] - l[1]) > 3 / ST.ansicht.k) { a.pts.push(p); ovAlt = true; }
+    } else if (a.art === 'innen') {
+      const dx = p[0] - a.p0[0], dy = p[1] - a.p0[1];
+      auswahlAbbilden(a, [1, 0, 0, 1, dx, dy], Object.assign({}, s, { cx: s.cx + dx, cy: s.cy + dy }));
+    } else if (a.art === 'dreh') {
+      // Winkel des Rahmens, eingerastet auf 1° bzw. 5°
+      const w0 = Math.atan2(a.p0[1] - s.cy, a.p0[0] - s.cx), w1 = Math.atan2(p[1] - s.cy, p[0] - s.cx);
+      const raster = Number(APP.einrasten) * Math.PI / 180;
+      const neu = Math.round((s.r + w1 - w0) / raster) * raster;
+      auswahlAbbilden(a, um(s.cx, s.cy, drehM(neu - s.r)), Object.assign({}, s, { r: neu }));
+    } else {
+      // Ecke ziehen: die gegenüberliegende Ecke bleibt fest
+      const e = ECKEN[a.art], hx = e[0] * s.w / 2, hy = e[1] * s.h / 2;
+      const q0 = imRahmen(s, a.p0), q = imRahmen(s, p);
+      const v0 = [q0[0] + hx, q0[1] + hy], v = [q[0] + hx, q[1] + hy];
+      let fx, fy;
+      if (APP.freiSkal) { fx = Math.abs(v0[0]) > 1e-9 ? klemme(v[0] / v0[0], 0.05, 50) : 1; fy = Math.abs(v0[1]) > 1e-9 ? klemme(v[1] / v0[1], 0.05, 50) : 1; }
+      else fx = fy = klemme(Math.hypot(v[0], v[1]) / (Math.hypot(v0[0], v0[1]) || 1), 0.05, 50);
+      const anker = ausRahmen(s, -hx, -hy);
+      const G = um(anker[0], anker[1], aff.mul(drehM(s.r), aff.mul([fx, 0, 0, fy, 0, 0], drehM(-s.r))));
+      const c = aff.pt(G, s.cx, s.cy);
+      auswahlAbbilden(a, G, { cx: c[0], cy: c[1], w: s.w * fx, h: s.h * fy, r: s.r });
+    }
+  },
+  ende(p) {
+    const a = aktiv;
+    if (a.art !== 'pfad') { if (a.gemerkt) geaendert(); ovAlt = true; return; }
+    let lang = 0; for (let i = 1; i < a.pts.length; i++) lang += Math.hypot(a.pts[i][0] - a.pts[i - 1][0], a.pts[i][1] - a.pts[i - 1][1]);
+    if (lang < 12 / ST.ansicht.k) {
+      // Tipp: oberstes Objekt unter dem Stift wählen, sonst Auswahl aufheben
+      let treffer = null;
+      for (const o of DOK.objekte) if (abstandObjekt(o, p[0], p[1]) <= 8 / ST.ansicht.k) treffer = o;
+      auswahlSetzen(treffer ? [treffer.id] : []);
+    } else {
+      // Umkreist: Objekte, deren Punkte mehrheitlich im Lasso liegen
+      const ids = [];
+      for (const o of DOK.objekte) {
+        const schritt = Math.max(1, Math.floor(o.pts.length / 40)); let drin = 0, n = 0;
+        for (let i = 0; i < o.pts.length; i += schritt) { const q = aff.pt(o.m, o.pts[i][0], o.pts[i][1]); n++; if (punktInPolygon(a.pts, q[0], q[1])) drin++; }
+        if (drin * 2 >= n) ids.push(o.id);
+      }
+      auswahlSetzen(ids);
+    }
+  },
+};
+
+/* ---------- Zwischenablage und Kontextaktionen ---------- */
+function kopieNeu(o, dx, dy) { return Object.assign({}, o, { id: DOK.nid++, m: aff.mul([1, 0, 0, 1, dx, dy], o.m) }); }
+function auswahlKopieren() { const l = gewaehlte(); if (l.length) { ZWISCHEN = l; toast(l.length + (l.length === 1 ? ' Objekt kopiert' : ' Objekte kopiert'), 1200); } }
+function auswahlLoeschen() {
+  if (!ST.auswahl.size || aktiv) return;
+  merke(); DOK.objekte = DOK.objekte.filter((o) => !ST.auswahl.has(o.id)); auswahlSetzen([]); geaendert();
+}
+function auswahlAusschneiden() { auswahlKopieren(); auswahlLoeschen(); }
+function auswahlDuplizieren() {
+  const l = gewaehlte(); if (!l.length) return;
+  merke(); const d = 24 / ST.ansicht.k, neu = l.map((o) => kopieNeu(o, d, d));
+  DOK.objekte = DOK.objekte.concat(neu); auswahlSetzen(neu.map((o) => o.id)); geaendert();
+}
+function einfuegen() {
+  if (!ZWISCHEN || !ZWISCHEN.length) { toast('Zwischenablage ist leer', 1400); return; }
+  // in die Mitte des sichtbaren Bereichs setzen
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const o of ZWISCHEN) { const b = rahmenDok(o); x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
+  const s = sichtFeld(), m = pxZuDok((s.l + s.r) / 2, (s.o + s.u) / 2);
+  merke(); const neu = ZWISCHEN.map((o) => kopieNeu(o, m[0] - (x0 + x1) / 2, m[1] - (y0 + y1) / 2));
+  DOK.objekte = DOK.objekte.concat(neu);
+  if (ST.werkzeug !== 'lasso') werkzeugSetzen('lasso');
+  auswahlSetzen(neu.map((o) => o.id)); geaendert();
+}
+function auswahlDrehenAuf(grad) {                              // numerische Eingabe: Rahmenwinkel absolut setzen
+  if (!SEL || !isFinite(grad)) return;
+  const neu = -grad * Math.PI / 180, a = { orig: origKarte(), gemerkt: false };
+  auswahlAbbilden(a, um(SEL.cx, SEL.cy, drehM(neu - SEL.r)), Object.assign({}, SEL, { r: neu })); geaendert();
+}
+
+/* ---------- Zeichnen: Lassolinie, Rahmen mit Griffen, Winkelanzeige; Kontextleiste platzieren ---------- */
+function lassoOverlay(c) {
+  const a = ST.ansicht, leiste = $('#auswahl-leiste');
+  if (aktiv && aktiv.art === 'pfad' && ST.werkzeug === 'lasso') {
+    c.setLineDash([6, 5]); c.strokeStyle = '#35e0d0'; c.lineWidth = 1.5; c.beginPath();
+    aktiv.pts.forEach((p, i) => { const q = dokZuPx(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
+    c.stroke(); c.setLineDash([]);
+  }
+  if (!SEL || ST.werkzeug !== 'lasso') { leiste.hidden = true; return; }
+  const P = (x, y) => { const d = ausRahmen(SEL, x, y); return dokZuPx(d[0], d[1]); };
+  const w = SEL.w / 2, h = SEL.h / 2, ecken = ECKEN.map((e) => P(e[0] * w, e[1] * h));
+  c.strokeStyle = '#35e0d0'; c.lineWidth = 1.2; c.setLineDash([5, 4]); c.beginPath();
+  ecken.forEach((q, i) => (i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]))); c.closePath(); c.stroke(); c.setLineDash([]);
+  const oben = P(0, -h), griff = P(0, -h - GRIFF_ABSTAND / a.k);
+  c.beginPath(); c.moveTo(oben[0], oben[1]); c.lineTo(griff[0], griff[1]); c.stroke();
+  c.fillStyle = '#0c1115';
+  for (const q of ecken) { c.beginPath(); c.rect(q[0] - 6, q[1] - 6, 12, 12); c.fill(); c.stroke(); }
+  c.beginPath(); c.arc(griff[0], griff[1], 8, 0, 6.2832); c.fill(); c.stroke();
+  if (aktiv && aktiv.art === 'dreh') {                         // Winkelanzeige während des Drehens
+    const t = fz(gradAnzeige(SEL.r), 4) + '°';
+    c.font = '600 14px ui-monospace, Menlo, monospace'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    const tw = c.measureText(t).width + 16;
+    c.fillStyle = 'rgba(10,14,18,.9)'; c.fillRect(griff[0] - tw / 2, griff[1] - 40, tw, 24);
+    c.fillStyle = '#35e0d0'; c.fillText(t, griff[0], griff[1] - 28);
+  }
+  // Kontextleiste unter die Auswahl
+  leiste.hidden = !!aktiv;
+  if (!aktiv) {
+    const xs = ecken.map((q) => q[0]), ys = ecken.map((q) => q[1]), lw = leiste.offsetWidth, s = sichtFeld();
+    let y = Math.max.apply(null, ys) + 18; if (y > s.u - 60) y = Math.min.apply(null, ys) - 62 - GRIFF_ABSTAND;
+    leiste.style.left = klemme((Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2 - lw / 2, s.l + 6, s.r - lw - 6) + 'px';
+    leiste.style.top = klemme(y, s.o + 64, s.u - 56) + 'px';
+    const f = $('#n-winkel'); if (document.activeElement !== f) f.value = gradAnzeige(SEL.r);
+    $('#al-einf').hidden = !ZWISCHEN;
+  }
+}
+function lassoStart() {
+  $('#leiste [data-wz=lasso]').hidden = false;
+  $('#auswahl-leiste').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-al]'); if (!b) return;
+    ({ aus: auswahlAusschneiden, kop: auswahlKopieren, einf: einfuegen, dup: auswahlDuplizieren, del: auswahlLoeschen })[b.dataset.al]();
+    ovAlt = true;
+  });
+  $('#n-winkel').addEventListener('change', (e) => auswahlDrehenAuf(parseFloat(e.target.value.replace(',', '.'))));
+  $('#kn-einfuegen').addEventListener('click', () => { menuesZu(); einfuegen(); });
+}
+/* =====================================================================
+   7c  FORMEN – Linie, Rechteck, Ellipse, NACA-Profile, .dat-Import
+   ===================================================================== */
+// Aktuelles Profil des Formenwerkzeugs: xy = Kontur in Sehnen-Einheiten (x 0..1 von Nase zu Hinterkante, y nach oben)
+const PROFIL = { name: 'NACA 2412', code: '2412', xy: null, sehne: 0, winkel: 0, aktId: null };
+let geist = null;                                            // Vorschau-Objekt beim Schweben des Pencils
+
+/* ---------- NACA-4-Ziffern: 1. Wölbung in %, 2. Wölbungsrücklage in Zehnteln, 3.–4. Dicke in % ---------- */
+function nacaPunkte(code, n = 64) {
+  const m = +code[0] / 100, p = +code[1] / 10, t = +code.slice(2) / 100, ob = [], un = [];
+  for (let i = 0; i <= n; i++) {
+    const x = (1 - Math.cos(i / n * Math.PI)) / 2;           // Kosinus-Verteilung: mehr Punkte an Nase und Hinterkante
+    const yt = 5 * t * (0.2969 * Math.sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x ** 3 - 0.1036 * x ** 4);   // geschlossene Hinterkante
+    let yc = 0, dyc = 0;
+    if (m > 0 && p > 0) {
+      if (x < p) { yc = m / (p * p) * (2 * p * x - x * x); dyc = 2 * m / (p * p) * (p - x); }
+      else { yc = m / ((1 - p) ** 2) * (1 - 2 * p + 2 * p * x - x * x); dyc = 2 * m / ((1 - p) ** 2) * (p - x); }
+    }
+    const w = Math.atan(dyc);
+    ob.push([x - yt * Math.sin(w), yc + yt * Math.cos(w)]); un.push([x + yt * Math.sin(w), yc - yt * Math.cos(w)]);
+  }
+  return ob.reverse().concat(un.slice(1, -1));               // Hinterkante -> Oberseite -> Nase -> Unterseite
+}
+/* ---------- .dat-Dateien: Selig (ein Zug um das Profil) oder Lednicer (Punktzahlen, dann Ober- und Unterseite) ---------- */
+function datLesen(text) {
+  let name = ''; const z = [];
+  for (const zeile of text.split(/\r?\n/)) {
+    const t = zeile.trim(); if (!t) continue;
+    const w = t.split(/[\s,;]+/).map(Number);
+    if (w.length >= 2 && isFinite(w[0]) && isFinite(w[1])) z.push([w[0], w[1]]);
+    else if (!z.length && !name) name = t;
+  }
+  let pts = z;
+  if (z.length && z[0][0] > 1.5 && z[0][1] > 1.5) {          // Lednicer: erste Zahlenzeile nennt die Punktzahlen
+    const no = Math.round(z[0][0]), nu = Math.round(z[0][1]), ob = z.slice(1, 1 + no), un = z.slice(1 + no, 1 + no + nu);
+    if (ob.length < 2 || un.length < 2) throw new Error('Lednicer-Datei unvollständig');
+    pts = ob.slice().reverse().concat(un.slice(1));
+  }
+  if (pts.length < 5) throw new Error('zu wenige Koordinaten');
+  let x0 = Infinity, x1 = -Infinity; for (const q of pts) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); }
+  const s = 1 / (x1 - x0); if (!isFinite(s)) throw new Error('ungültige Koordinaten');
+  return { name: name || 'Profil', xy: pts.map((q) => [(q[0] - x0) * s, q[1] * s]) };   // auf Sehne 1 normiert
+}
+/* ---------- Profil als Objekt: Nase zeigt zum Einlass, positiver Anstellwinkel erzeugt positiven Auftrieb ---------- */
+function profilLokal(xy, sehne, winkelGrad) {
+  const a = winkelGrad * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  // Einheitsvektoren im Dokument: Strömungsrichtung und "Auftrieb positiv"
+  const ef = { links: [1, 0], rechts: [-1, 0], oben: [0, 1], unten: [0, -1] }[DOK.seite], el = istQuer() ? [1, 0] : [0, -1];
+  return xy.map(([x, y]) => {
+    const u = (x - 0.25) * c + y * s, v = -(x - 0.25) * s + y * c;       // Drehung um den Viertelpunkt (Nase hoch = positiv)
+    return [(u * ef[0] + v * el[0]) * sehne, (u * ef[1] + v * el[1]) * sehne];
+  });
+}
+function profilObjekt(id, m) {
+  return { id, art: 'profil', pts: profilLokal(PROFIL.xy, PROFIL.sehne, PROFIL.winkel), w: 0, zu: true, neg: [], m,
+           pr: { name: PROFIL.name, code: PROFIL.code, xy: PROFIL.code ? null : PROFIL.xy, sehne: PROFIL.sehne, winkel: PROFIL.winkel } };
+}
+function profilWaehlen(code) {
+  if (!/^\d{4}$/.test(code) || +code.slice(2) < 1) { toast('Bitte vier Ziffern eingeben, z. B. 2412 (Dicke mindestens 01)'); return; }
+  PROFIL.code = code; PROFIL.name = 'NACA ' + code; PROFIL.xy = nacaPunkte(code); profilGeaendert();
+}
+// Einstellungen im Menü geändert: das zuletzt platzierte Profil folgt (Sehnenlänge, Anstellwinkel, Profilform)
+function profilGeaendert() {
+  const i = DOK.objekte.findIndex((o) => o.id === PROFIL.aktId && o.art === 'profil');
+  if (i >= 0 && !aktiv) { merke(); DOK.objekte = DOK.objekte.slice(); DOK.objekte[i] = Object.assign(profilObjekt(PROFIL.aktId, DOK.objekte[i].m), { neg: [] }); geaendert(); }
+  uiSync();
+}
+// Objekt des Formenwerkzeugs zwischen Startpunkt a und aktuellem Punkt b
+function formObjekt(id, a, b) {
+  const f = ST.form;
+  if (f === 'profil') return profilObjekt(id, [1, 0, 0, 1, b[0], b[1]]);
+  if (f === 'linie') return { id, art: 'linie', pts: [a, b], w: strichBreite(), zu: false, neg: [], m: EINS() };
+  if (f === 'rechteck') return { id, art: 'rechteck', pts: [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]], w: 0, zu: true, neg: [], m: EINS() };
+  let rx = Math.abs(b[0] - a[0]) / 2, ry = Math.abs(b[1] - a[1]) / 2;
+  if (Math.abs(rx - ry) < 0.08 * Math.max(rx, ry)) rx = ry = (rx + ry) / 2;         // fast rund -> Kreis
+  const pts = []; for (let i = 0; i < 72; i++) { const w = i / 72 * 2 * Math.PI; pts.push([rx * Math.cos(w), ry * Math.sin(w)]); }
+  return { id, art: 'ellipse', pts, w: 0, zu: true, neg: [], m: [1, 0, 0, 1, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+}
+WERKZEUGE.form = {
+  start(p) {
+    merke(); geist = null;
+    aktiv = { p0: p, id: DOK.nid++, pos: DOK.objekte.length };
+    DOK.objekte.push(formObjekt(aktiv.id, p, p)); geaendert(false);
+  },
+  zug(p) { DOK.objekte[aktiv.pos] = formObjekt(aktiv.id, aktiv.p0, p); geaendert(false); },
+  ende(p) {
+    const a = aktiv;
+    if (ST.form === 'profil') {                                // platziert: Menü öffnen, damit Sehnenlänge und Anstellwinkel direkt einstellbar sind
+      PROFIL.aktId = a.id;
+      if ($('#pop-form').hidden) setTimeout(() => { if ($('#pop-form').hidden) popAuf('pop-form', $('#leiste [data-wz=form]')); }, 0);
+    }
+    else if (Math.hypot(p[0] - a.p0[0], p[1] - a.p0[1]) < 2 * SIM.dx) {             // nur getippt: nichts anlegen
+      DOK.objekte.splice(a.pos, 1); UNDO.pop(); undoKnoepfe(); geaendert(false);
+      toast('Zum Aufspannen der Form ziehen', 1500); return;
+    }
+    geaendert();
+  },
+  schweben(p) { if (ST.form === 'profil') { geist = formObjekt(0, p, p); ovAlt = true; } },   // Vorschau der Form unter dem schwebenden Pencil
+  schwebenEnde() { if (geist) { geist = null; ovAlt = true; } },
+};
+function formOverlay(c) {
+  if (!geist || ST.werkzeug !== 'form' || aktiv) return;
+  const a = ST.ansicht;
+  c.save(); c.globalAlpha = 0.45;
+  einObjekt(c, geist, aff.mul([a.k * ovDpr, 0, 0, a.k * ovDpr, a.ox * ovDpr, a.oy * ovDpr], geist.m), '#8cf2e6', 0, false);
+  c.restore(); c.setTransform(ovDpr, 0, 0, ovDpr, 0, 0);
+}
+function formenStart() {
+  $('#leiste [data-wz=form]').hidden = false;
+  PROFIL.xy = nacaPunkte(PROFIL.code);
+  $('#seg-naca').addEventListener('click', (e) => { const b = e.target.closest('[data-n]'); if (b) profilWaehlen(b.dataset.n); });
+  $('#t-naca').addEventListener('change', (e) => { if (e.target.value.trim()) profilWaehlen(e.target.value.trim()); });
+  $('#n-sehne').addEventListener('change', (e) => { const v = parseFloat(e.target.value.replace(',', '.')) * EINHEIT_M[DOK.einheit]; if (v > 0) { PROFIL.sehne = v; profilGeaendert(); } else uiSync(); });
+  $('#n-aoa').addEventListener('change', (e) => { const v = parseFloat(e.target.value.replace(',', '.')); if (isFinite(v)) { PROFIL.winkel = klemme(v, -90, 90); profilGeaendert(); } else uiSync(); });
+  $('#kn-dat').addEventListener('click', () => $('#datei-dat').click());
+  $('#datei-dat').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { const d = datLesen(await f.text()); PROFIL.code = null; PROFIL.xy = d.xy; PROFIL.name = d.name; profilGeaendert(); toast('Profil „' + d.name + '“ geladen (' + d.xy.length + ' Punkte)'); }
+    catch (err) { toast('Die Datei konnte nicht gelesen werden: ' + err.message, 4000); }
+  });
+}
+function formenSync() {
+  $('#form-profil').hidden = ST.form !== 'profil';
+  if (!(PROFIL.sehne > 0)) PROFIL.sehne = (istQuer() ? DOK.hoehe : DOK.breite) / 5;
+  for (const b of $('#seg-naca').children) b.classList.toggle('an', b.dataset.n === PROFIL.code);
+  if (document.activeElement !== $('#n-sehne')) $('#n-sehne').value = +(PROFIL.sehne / EINHEIT_M[DOK.einheit]).toPrecision(4);
+  if (document.activeElement !== $('#n-aoa')) $('#n-aoa').value = PROFIL.winkel;
+  $('#e-sehne').textContent = DOK.einheit; $('#profil-name').textContent = 'Aktuell: ' + PROFIL.name + ' – mit dem Pencil platzieren; Sehnenlänge und Winkel wirken auf das zuletzt platzierte Profil.';
+}
+/* =====================================================================
+   7d  EXTRAS – Strömung anstoßen, Einschwingen (Ultra), Simulationsbereich
+   ===================================================================== */
+/* ---------- Werkzeug „Strömung anstoßen“: der Pencil schiebt das Fluid ---------- */
+WERKZEUGE.stoss = {
+  start(p) { aktiv = { vor: p, t: performance.now() }; },
+  zug(p) {
+    const a = aktiv, jetzt = performance.now(), dt = Math.max(4, jetzt - a.t);
+    // Bewegung des Stifts in Zellen (Dokument -> UV -> Gitter)
+    const q = aff.pt(SIM.dokUV, p[0], p[1]), v = aff.pt(SIM.dokUV, a.vor[0], a.vor[1]);
+    let vx = (q[0] - v[0]) * SIM.nx / dt, vy = (q[1] - v[1]) * SIM.ny / dt;        // Zellen pro Millisekunde
+    const l = Math.hypot(vx, vy), max = 0.004;
+    if (l > 0) { const f = Math.min(max, l * 0.008) / l; vx *= f; vy *= f; }
+    stossAkt = { x: q[0] * SIM.nx, y: q[1] * SIM.ny, vx, vy, r: Math.max(4, 17 / (ST.ansicht.k * SIM.dx)) };
+    a.vor = p; a.t = jetzt;
+  },
+  ende() { stossAkt = null; },
+};
+
+/* ---------- Einschwingen: ohne Bildaufbau so viele Schritte wie möglich rechnen ---------- */
+let schwing = null;                                          // { ziel, start, paket, sync, t0 }
+function einschwingen() {
+  if (schwing) return;
+  schwing = { start: SIM.schritte, ziel: SIM.schritte + Math.round(25 * SIM.nx), paket: 20, sync: null, t0: 0 };   // 25·nx Schritte ≈ 2,5 Durchläufe des Kanals
+  $('#fortschritt').hidden = false; schwingAnzeige();
+}
+function schwingAnzeige() {
+  const f = (SIM.schritte - schwing.start) / (schwing.ziel - schwing.start);
+  $('#fo-balken').style.width = Math.round(klemme(f, 0, 1) * 100) + '%';
+  $('#fo-text').textContent = 'Einschwingen … ' + fz(SIM.schritte - schwing.start, 6) + ' von ' + fz(schwing.ziel - schwing.start, 6) + ' Schritten';
+}
+// Wird statt des normalen Bildaufbaus aufgerufen: ein Schrittpaket abschicken, auf die GPU warten, Paketgröße anpassen
+function schwingSchritt() {
+  const s = schwing;
+  if (s.sync) {
+    const st = gl.clientWaitSync(s.sync, 0, 0);
+    if (st === gl.TIMEOUT_EXPIRED) return;
+    gl.deleteSync(s.sync); s.sync = null;
+    const dauer = performance.now() - s.t0;                  // Ziel: etwa 120 ms GPU-Arbeit je Paket
+    s.paket = Math.round(klemme(s.paket * klemme(120 / Math.max(dauer, 1), 0.5, 2), 4, 2000));
+    schwingAnzeige();
+    if (SIM.schritte >= s.ziel) { schwingEnde(false); return; }
+  }
+  loeserSchritte(Math.min(s.paket, s.ziel - SIM.schritte));
+  s.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); s.t0 = performance.now(); gl.flush();
+}
+function schwingEnde(abbruch) {
+  if (!schwing) return;
+  if (schwing.sync) gl.deleteSync(schwing.sync);
+  schwing = null; $('#fortschritt').hidden = true; schweifLeeren();
+  toast(abbruch ? 'Einschwingen abgebrochen' : 'Eingeschwungen', 1500);
+}
+
+/* ---------- Gemeinsame Einhängepunkte ---------- */
+function werkzeugOverlay(c) { lassoOverlay(c); formOverlay(c); }
+function uiSyncExtra() {
+  formenSync();
+  $('#z-ultra').hidden = DOK.qualitaet !== 'ultra';
+  $('#r-bereich').value = DOK.bereich;
+  $('#w-bereich').textContent = DOK.bereich >= 0.999 ? 'ganze Fläche' : DOK.bereich <= 0.001 ? 'sichtbarer Ausschnitt' : Math.round(DOK.bereich * 100) + ' %';
+  $('#kn-mehr').classList.toggle('an', ST.werkzeug === 'stoss');
+  if (document.activeElement !== $('#t-name')) $('#t-name').value = DOK.name;
+}
+function mehrAktionExtra(a) {
+  if (a === 'stoss') { werkzeugSetzen('stoss'); toast('Strömung anstoßen: mit dem Pencil durch das Fluid ziehen. Zum Beenden ein anderes Werkzeug wählen.', 3800); }
+  else if (a === 'png') bildExportieren();
+  else if (a === 'json') skizzeExportieren(DOK);
+}
+function extraStart() {
+  lassoStart(); formenStart();
+  $('#kn-einschwingen').addEventListener('click', einschwingen);
+  $('#fo-stop').addEventListener('click', () => schwingEnde(true));
+  // Simulationsbereich: erst beim Loslassen neu aufbauen (teuer)
+  $('#r-bereich').addEventListener('input', (e) => { DOK.bereich = parseFloat(e.target.value); uiSyncExtra(); });
+  $('#r-bereich').addEventListener('change', (e) => { wertSetzen('dok.bereich', parseFloat(e.target.value)); toast('Simulationsbereich neu initialisiert', 1400); });
+  $('#t-name').addEventListener('change', (e) => { DOK.name = e.target.value.trim() || 'Skizze'; speichernGeplant(); uiSync(); });
+}
+/* =====================================================================
+   8  EINGABE – Pencil zeichnet, Finger navigieren, Maus zum Testen am Rechner
+   ===================================================================== */
+const finger = new Map();          // aktive Finger (bzw. rechte/mittlere Maustaste): id -> {x, y}
+let fingerGeste = null;            // für Tipp-Erkennung: { t0, max, weg }
+let stiftId = null;
+let stiftSpur = { t: -1e9, x: 0, y: 0 };   // letzter bekannter Ort des Pencils (auch schwebend) – für die Handballen-Erkennung
+const zeigerEl = $('#zeiger');
+
+function zeigerZeigen(x, y) {
+  const d = zeigerGroesse();
+  if (!d) { zeigerEl.hidden = true; return; }
+  zeigerEl.hidden = false; zeigerEl.style.width = zeigerEl.style.height = d + 'px';
+  zeigerEl.style.transform = 'translate(' + (x - d / 2) + 'px,' + (y - d / 2) + 'px)';
+  zeigerEl.classList.toggle('rad', ST.werkzeug === 'radierer');
+}
+const wz = () => WERKZEUGE[ST.werkzeug] || WERKZEUGE.frei;
+
+ov.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  // Offenes Profil-Menü: der erste Tipp daneben schließt nur das Menü und platziert kein weiteres Profil
+  const nurSchliessen = e.pointerType !== 'touch' && ST.werkzeug === 'form' && ST.form === 'profil' && performance.now() - popFormZeit < 80;
+  menuesZu();
+  if (nurSchliessen) return;
+  if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+  const navigiert = e.pointerType === 'touch' || (e.pointerType === 'mouse' && e.button !== 0);
+  if (navigiert) {
+    // Handballen: Berührung dicht neben dem eben noch schwebenden oder schreibenden Pencil ignorieren
+    const ballen = e.pointerType === 'touch' && performance.now() - stiftSpur.t < 500 && Math.hypot(e.clientX - stiftSpur.x, e.clientY - stiftSpur.y) < 320;
+    if (!aktiv && !ballen) fingerStart(e);
+    return;
+  }
+  if (e.pointerType === 'pen') stiftSpur = { t: performance.now(), x: e.clientX, y: e.clientY };
+  if (e.button !== 0 || aktiv || stiftId !== null) return;
+  // Stift aufgesetzt: laufende Fingergeste (Handballen) verwerfen
+  finger.clear(); fingerGeste = null;
+  stiftId = e.pointerId; try { ov.setPointerCapture(e.pointerId); } catch (err) {}
+  wz().start(pxZuDok(e.clientX, e.clientY), e);
+  zeigerZeigen(e.clientX, e.clientY);
+});
+ov.addEventListener('pointermove', (e) => {
+  if (finger.has(e.pointerId)) { fingerZug(e); return; }
+  if (e.pointerType === 'touch') return;
+  if (e.pointerType === 'pen') stiftSpur = { t: performance.now(), x: e.clientX, y: e.clientY };
+  if (e.pointerId === stiftId) {
+    if (aktiv) {
+      // getCoalescedEvents liefert alle Zwischenpunkte des Pencils (bis 240 Hz)
+      const liste = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      if (liste.length) for (const c of liste) wz().zug(pxZuDok(c.clientX, c.clientY), c);
+      else wz().zug(pxZuDok(e.clientX, e.clientY), e);
+    }
+  } else if (stiftId === null && wz().schweben) wz().schweben(pxZuDok(e.clientX, e.clientY), e);   // Hover-Vorschau
+  zeigerZeigen(e.clientX, e.clientY);
+});
+function stiftEnde(e) {
+  if (finger.has(e.pointerId)) { fingerEnde(e); return; }
+  if (e.pointerId !== stiftId) return;
+  stiftId = null;
+  if (aktiv) { wz().ende(pxZuDok(e.clientX, e.clientY), e); aktiv = null; }
+  if (e.pointerType === 'pen' && e.type === 'pointercancel') zeigerEl.hidden = true;
+}
+ov.addEventListener('pointerup', stiftEnde);
+ov.addEventListener('pointercancel', stiftEnde);
+ov.addEventListener('pointerleave', (e) => { if (e.pointerId !== stiftId) { zeigerEl.hidden = true; if (wz().schwebenEnde) wz().schwebenEnde(); } });
+
+/* ---------- Finger: 1 Finger verschiebt, 2 Finger zoomen; 2-Finger-Tipp = Rückgängig, 3-Finger-Tipp = Wiederholen ---------- */
+function fingerStart(e) {
+  if (finger.size === 0) fingerGeste = { t0: performance.now(), max: 0, weg: 0 };
+  finger.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (fingerGeste) fingerGeste.max = Math.max(fingerGeste.max, finger.size);
+  try { ov.setPointerCapture(e.pointerId); } catch (err) {}
+}
+function fingerZug(e) {
+  const f = finger.get(e.pointerId), a = ST.ansicht;
+  const dx = e.clientX - f.x, dy = e.clientY - f.y;
+  if (fingerGeste) fingerGeste.weg += Math.abs(dx) + Math.abs(dy);
+  if (finger.size === 1) { a.ox += dx; a.oy += dy; f.x = e.clientX; f.y = e.clientY; ansichtGeaendert(); }
+  else if (finger.size === 2) {
+    let g = null; for (const [id, o] of finger) if (id !== e.pointerId) g = o;
+    const d0 = Math.hypot(f.x - g.x, f.y - g.y), mx0 = (f.x + g.x) / 2, my0 = (f.y + g.y) / 2;
+    f.x = e.clientX; f.y = e.clientY;
+    const d1 = Math.hypot(f.x - g.x, f.y - g.y), mx1 = (f.x + g.x) / 2, my1 = (f.y + g.y) / 2;
+    a.ox += mx1 - mx0; a.oy += my1 - my0;
+    zoomUm(mx1, my1, d0 > 4 ? d1 / d0 : 1);
+  } else { f.x = e.clientX; f.y = e.clientY; }
+}
+function fingerEnde(e) {
+  finger.delete(e.pointerId);
+  if (finger.size === 0 && fingerGeste) {
+    const g = fingerGeste; fingerGeste = null;
+    if (e.type === 'pointerup' && e.pointerType === 'touch' && performance.now() - g.t0 < 380 && g.weg < 30) {
+      if (g.max === 2) rueckgaengig(); else if (g.max === 3) wiederholen();
+    }
+  }
+}
+ov.addEventListener('wheel', (e) => {                              // Maus/Trackpad
+  e.preventDefault();
+  zoomUm(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.012 : 0.0016)));
+}, { passive: false });
+
+/* ---------- Safari-Standardgesten unterdrücken ---------- */
+for (const typ of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(typ, (e) => e.preventDefault(), { passive: false });
+for (const typ of ['touchstart', 'touchmove']) ov.addEventListener(typ, (e) => e.preventDefault(), { passive: false });   // keine Lupe, kein Scrollen
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('dblclick', (e) => e.preventDefault());
+document.addEventListener('selectstart', (e) => { if (!e.target.closest || !e.target.closest('input,textarea,pre')) e.preventDefault(); });
+/* ---------- Tastatur (für iPad-Tastatur und Rechner) ---------- */
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest && e.target.closest('input,select,textarea')) return;
+  const k = e.key.toLowerCase();
+  if ((e.metaKey || e.ctrlKey) && k === 'z') { e.preventDefault(); e.shiftKey ? wiederholen() : rueckgaengig(); }
+  else if (k === 'e') umschalten();
+  else if (k === ' ') { e.preventDefault(); pauseUmschalten(); }
+  else if ((k === 'backspace' || k === 'delete') && typeof auswahlLoeschen === 'function') auswahlLoeschen();
+});
+/* =====================================================================
+   9  OBERFLÄCHE – Leiste, Menüs, Panel, HUD, Legende, Hilfe, Umschaltknopf
+   ===================================================================== */
+const hq = (k) => '<button class="hq" data-h="' + k + '">?</button>';
+
+/* ---------- Aufklapp-Menüs ---------- */
+let popFormZeit = -1e9;
+function popAuf(id, anker) {
+  const p = $('#' + id), warOffen = !p.hidden;
+  menuesZu(); if (warOffen) return;
+  p.hidden = false;
+  const r = anker.getBoundingClientRect(), w = p.offsetWidth;
+  p.style.left = klemme(r.left + r.width / 2 - w / 2, 8 + SAFE.l, window.innerWidth - w - 8 - SAFE.r) + 'px';
+  p.style.top = r.bottom + 10 + 'px';
+}
+function menuesZu() { for (const p of $$('.pop')) p.hidden = true; hilfeZu(); }
+
+/* ---------- Hilfe-Popover: Tipp öffnet/schließt, Pencil-Hover (0,4 s) öffnet, Wegbewegen schließt ---------- */
+let hilfeEl = null, hilfeHover = false, hilfeTimer = 0;
+function hilfeZeigen(el, hover) {
+  const h = HILFE[el.dataset.h]; if (!h) return;
+  hilfeZu();
+  const box = $('#hilfe'); box.textContent = '';
+  const b = document.createElement('b'); b.textContent = h.t; box.append(b, h.x);
+  box.hidden = false; el.classList.add('an'); hilfeEl = el; hilfeHover = hover;
+  const r = el.getBoundingClientRect(), w = box.offsetWidth, hh = box.offsetHeight;
+  let x = r.left + r.width / 2 - w / 2, y = r.bottom + 10;
+  if (y + hh > window.innerHeight - 8 - SAFE.u) y = r.top - hh - 10;
+  box.style.left = klemme(x, 8 + SAFE.l, window.innerWidth - w - 8 - SAFE.r) + 'px';
+  box.style.top = Math.max(8 + SAFE.o, y) + 'px';
+}
+function hilfeZu() {
+  clearTimeout(hilfeTimer);
+  if (hilfeEl) hilfeEl.classList.remove('an');
+  hilfeEl = null; $('#hilfe').hidden = true;
+}
+function hilfeStart() {
+  document.addEventListener('click', (e) => {
+    const q = e.target.closest && e.target.closest('.hq');
+    if (!q) { hilfeZu(); return; }
+    e.preventDefault(); e.stopPropagation();
+    if (hilfeEl === q && !hilfeHover) hilfeZu();              // zweiter Tipp schließt
+    else hilfeZeigen(q, false);                               // Tipp öffnet (oder hält ein per Hover geöffnetes fest)
+  }, true);
+  document.addEventListener('pointerover', (e) => {
+    if (e.pointerType === 'touch') return;
+    const q = e.target.closest && e.target.closest('.hq'); if (!q || hilfeEl === q) return;
+    clearTimeout(hilfeTimer); hilfeTimer = setTimeout(() => hilfeZeigen(q, true), 400);
+  });
+  document.addEventListener('pointerout', (e) => {
+    const q = e.target.closest && e.target.closest('.hq'); if (!q) return;
+    clearTimeout(hilfeTimer); if (hilfeEl === q && hilfeHover) hilfeZu();
+  });
+}
+
+/* ---------- Bindung: Bedienelemente mit data-ziel="dok.x | app.x | st.x" ---------- */
+const zielObj = (p) => ({ dok: DOK, app: APP, st: ST })[p.split('.')[0]];
+const wertLesen = (p) => zielObj(p)[p.split('.')[1]];
+function wertSetzen(p, v) { zielObj(p)[p.split('.')[1]] = v; nachAenderung(p); }
+function nachAenderung(p) {
+  switch (p) {
+    case 'dok.qualitaet': case 'dok.seite': case 'dok.bereich': simAufbauen(); break;
+    case 'dok.U': case 'dok.medium': case 'dok.bezug': physikAktualisieren(); break;
+    case 'app.hilfe': if (!APP.hilfe) hilfeZu(); break;
+    case 'st.modus': if (ST.modus === 'partikel') schweifLeeren(); break;
+    case 'st.radModus': APP.radModus = ST.radModus; appSpeichern(); break;      // zuletzt gewählter Radierer wird gemerkt
+  }
+  if (p.startsWith('dok.')) speichernGeplant();
+  if (p.startsWith('app.')) appSpeichern();
+  uiSync(); ovAlt = true;
+}
+// Schieberegler mit logarithmischer Skala: Wert = min·(max/min)^v
+const logWert = (v, min, max) => min * Math.pow(max / min, v);
+const logPos = (w, min, max) => klemme(Math.log(w / min) / Math.log(max / min), 0, 1);
+const strichMax = () => Math.max(DOK.breite, DOK.hoehe) / 12;
+
+/* ---------- Alle Bedienelemente an den Zustand angleichen ---------- */
+function uiSync() {
+  document.body.classList.toggle('ohne-hilfe', !APP.hilfe);
+  for (const s of $$('.seg[data-ziel]')) { const w = wertLesen(s.dataset.ziel); for (const b of s.children) b.classList.toggle('an', b.dataset.w === String(w)); }
+  for (const c of $$('input[type=checkbox][data-ziel]')) c.checked = !!wertLesen(c.dataset.ziel);
+  for (const r of $$('input[type=range][data-ziel], input[type=number][data-ziel]')) if (document.activeElement !== r) r.value = wertLesen(r.dataset.ziel);
+  for (const b of $$('#leiste [data-wz]')) b.classList.toggle('an', b.dataset.wz === ST.werkzeug);
+  for (const b of $$('#modus-liste [data-modus]')) b.classList.toggle('an', b.dataset.modus === ST.modus);
+  $('#w-fenster').textContent = fz(DOK.fenster, 2) + ' s';
+  // Geschwindigkeit
+  $('#r-U').value = Math.log10(DOK.U); $('#e-U').textContent = APP.vEinheit;
+  if (document.activeElement !== $('#n-U')) $('#n-U').value = +(DOK.U * vFaktor()).toPrecision(3);
+  // Werkzeuggrößen
+  $('#r-strich').value = logPos(strichBreite(), strichMin(), strichMax()); $('#w-strich').textContent = fLaenge(strichBreite(), 2);
+  $('#r-rad').value = logPos(radGroesse(), strichMin(), strichMax() * 2); $('#w-rad').textContent = fLaenge(radGroesse(), 2);
+  $('#z-radgr').hidden = ST.radModus !== 'praezise';
+  $('#r-tempo').value = Math.log(ST.tempo) / Math.log(4); $('#w-tempo').textContent = fz(ST.tempo, 2) + '×';
+  $('#z-anzeigetempo').hidden = ST.modus !== 'partikel';
+  $('#kn-pause').textContent = ST.pause ? 'Weiter' : 'Pause';
+  // Blatt
+  const f = EINHEIT_M[DOK.einheit];
+  if (document.activeElement !== $('#n-breite')) $('#n-breite').value = +(DOK.breite / f).toPrecision(6);
+  if (document.activeElement !== $('#n-hoehe')) $('#n-hoehe').value = +(DOK.hoehe / f).toPrecision(6);
+  $('#s-einheit').value = DOK.einheit;
+  // Umschaltknopf zeigt, wohin er wechselt
+  const rad = ST.werkzeug === 'radierer';
+  $('#umschalter').classList.toggle('rad', rad);
+  $('#um-icon').innerHTML = rad ? '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/>' : '<path d="M9 19l-5-5L14 4l6 6-9 9z"/><path d="M8 10l6 6M9 19h11"/>';
+  if (typeof uiSyncExtra === 'function') uiSyncExtra();
+  legendeAktualisieren(); undoKnoepfe();
+}
+
+/* ---------- Farbskala mit physikalischen Einheiten ---------- */
+function legendeAktualisieren() {
+  const m = ST.modus, el = $('#legende');
+  el.hidden = m === 'rauch';
+  if (el.hidden) return;
+  $('#leg-balken').style.background = farbVerlauf(FARBEN[m]);
+  $('#leg-hq').dataset.h = 'm_' + m;
+  const w = $('#leg-werte').children;
+  if (m === 'druck') {
+    const p = P_SKALA * 0.5 * MEDIEN[DOK.medium].rho * DOK.U * DOK.U, kilo = p >= 1000;
+    $('#leg-titel').textContent = 'Druck gegen Umgebung';
+    w[0].textContent = '−' + fz(kilo ? p / 1000 : p, 2); w[1].textContent = '0'; w[2].textContent = '+' + fz(kilo ? p / 1000 : p, 2) + (kilo ? ' kPa' : ' Pa');
+  } else {
+    $('#leg-titel').textContent = 'Geschwindigkeit';
+    w[0].textContent = '0'; w[1].textContent = fz(DOK.U * vFaktor() * V_SKALA / 2, 2); w[2].textContent = fTempo(DOK.U * V_SKALA, 2);
+  }
+}
+
+/* ---------- HUD ---------- */
+const HUD_ZEILEN = [                         // [Beschriftung, id, Hilfe-Schlüssel] – null = Zwischenüberschrift
+  ['Alle Hindernisse', null],
+  ['Widerstand', 'fd', 'widerstand'], ['', 'fdN', 'tiefe'],
+  ['Auftrieb', 'fl', 'auftrieb'], ['', 'flN', null],
+  ['C<sub>d</sub>', 'cd', 'cd'], ['C<sub>l</sub>', 'cl', 'cl'],
+  ['Auswahl', null, 'auswahlkraft', 'sel'],
+  ['Widerstand', 'sfd', null, 'sel'], ['Auftrieb', 'sfl', null, 'sel'], ['C<sub>d</sub> · C<sub>l</sub>', 'scd', null, 'sel'],
+  ['Strömung', null],
+  ['Re<sub>phys</sub>', 're1', 're_phys'], ['Re<sub>sim</sub>', 're2', 're_sim'],
+  ['Bezugslänge', 'lref', 'bezug'], ['Mittelung', 'mitt', 'fenster'],
+  ['Zellgröße · Gitter', 'gitter', 'zelle'], ['Fps · Schritte/Bild', 'takt', 'fps'],
+  ['2D-Querschnitt', 'zweid', 'zweiD'],
+];
+function hudStart() {
+  $('#hud-tab').innerHTML = HUD_ZEILEN.map((z) => {
+    const kl = (z[1] ? '' : 'kopf') + (z[3] ? ' sel' : '');
+    return '<tr class="' + kl + '"><td>' + z[0] + '</td><td class="zahl" ' + (z[1] ? 'id="hl-' + z[1] + '"' : '') + '></td><td>' + (z[2] ? hq(z[2]) : '') + '</td></tr>';
+  }).join('');
+  $('#hud-kurz').addEventListener('click', () => { $('#hud-lang').hidden = !$('#hud-lang').hidden; hudAktualisieren(); });
+}
+const pm = (m, s, st = 3) => fz(m, st) + ' ± ' + fz(s, 2);
+function hudAktualisieren() {
+  const s = kraftStatistik(false);
+  $('#h-cd').textContent = s ? fz(s.cd, 3) : '–'; $('#h-cl').textContent = s ? fz(s.cl, 3) : '–';
+  $('#h-re').textContent = fRe(SIM.reSim); $('#h-fps').textContent = Math.round(fpsAnzeige);
+  const hin = $('#hud-hinweis');
+  const versperrt = SIM.geo && SIM.geo.stirn > 0.6 * SIM.ny;         // Hindernisse nehmen über 60 % der Kanalhöhe ein
+  hin.hidden = !SIM.gedeckelt && !versperrt;
+  $('#hud-hinweis-text').textContent = versperrt ? 'Kanal zu über 60 % versperrt – Zustrom wird gedrosselt, Werte nicht aussagekräftig'
+    : SIM.gedeckelt ? 'Simulation bei Re ≈ ' + fRe(SIM.reSim) + ' statt ' + fRe(SIM.rePhys) + ' – qualitativ' : '';
+  if ($('#hud-lang').hidden) return;
+  const set = (id, t) => ($('#hl-' + id).textContent = t);
+  set('fd', s ? fKraft(s.cd * s.proM) + '/m' : '–'); set('fdN', s ? fKraft(s.cd * s.proM * DOK.tiefe) + ' bei ' + fLaenge(DOK.tiefe) + ' Tiefe' : '');
+  set('fl', s ? fKraft(s.cl * s.proM) + '/m' : '–'); set('flN', s ? fKraft(s.cl * s.proM * DOK.tiefe) + ' bei ' + fLaenge(DOK.tiefe) + ' Tiefe' : '');
+  set('cd', s ? pm(s.cd, s.cdS) : '–'); set('cl', s ? pm(s.cl, s.clS) : '–');
+  const a = ST.auswahl.size ? kraftStatistik(true) : null;
+  for (const z of $$('#hud-tab tr.sel')) z.hidden = !ST.auswahl.size;
+  if (ST.auswahl.size) {
+    set('sfd', a ? fKraft(a.cd * a.proM * DOK.tiefe) : '–'); set('sfl', a ? fKraft(a.cl * a.proM * DOK.tiefe) : '–');
+    set('scd', a ? fz(a.cd, 3) + ' · ' + fz(a.cl, 3) : '–');
+  }
+  set('re1', fRe(SIM.rePhys)); set('re2', fRe(SIM.reSim));
+  set('lref', SIM.lref > 0 ? fLaenge(SIM.lref) + (DOK.bezug === 'sehne' ? ' (Sehne)' : ' (Stirnhöhe)') : '–');
+  set('mitt', fz(DOK.fenster, 2) + ' s, ' + (s ? s.n : 0) + ' Werte');
+  set('gitter', fLaenge(SIM.dx, 2) + ' · ' + SIM.nx + '×' + SIM.ny);
+  set('takt', Math.round(fpsAnzeige) + ' · ' + fz(schritteAnzeige, 2));
+  set('zweid', 'kein cw-Wert');
+}
+
+/* ---------- Umschaltknopf: frei verschiebbar, Position wird gespeichert ---------- */
+function knopfPlatzieren() {
+  const u = $('#umschalter'), w = window.innerWidth, h = window.innerHeight;
+  const p = APP.knopf || { x: (SAFE.l + 44) / w, y: 0.62 };
+  u.style.left = klemme(p.x * w, SAFE.l + 4, w - 66 - SAFE.r) + 'px';
+  u.style.top = klemme(p.y * h, SAFE.o + 4, h - 66 - SAFE.u) + 'px';
+}
+function knopfStart() {
+  const u = $('#umschalter'); let g = null;
+  u.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.hq')) return;
+    e.preventDefault(); u.setPointerCapture(e.pointerId);
+    g = { id: e.pointerId, x: e.clientX, y: e.clientY, l: u.offsetLeft, t: u.offsetTop, bewegt: false };
+  });
+  u.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x, dy = e.clientY - g.y;
+    if (!g.bewegt && Math.hypot(dx, dy) < 9) return;
+    g.bewegt = true;
+    u.style.left = klemme(g.l + dx, 4, window.innerWidth - 66) + 'px'; u.style.top = klemme(g.t + dy, 4, window.innerHeight - 66) + 'px';
+  });
+  const ende = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    if (g.bewegt) { APP.knopf = { x: u.offsetLeft / window.innerWidth, y: u.offsetTop / window.innerHeight }; appSpeichern(); }
+    else if (e.type === 'pointerup') umschalten();
+    g = null;
+  };
+  u.addEventListener('pointerup', ende); u.addEventListener('pointercancel', ende);
+  u.addEventListener('click', (e) => e.preventDefault());
+}
+function pauseUmschalten() { ST.pause = !ST.pause; uiSync(); toast(ST.pause ? 'Pausiert' : 'Läuft', 900); }
+
+/* ---------- Alles verdrahten ---------- */
+function uiStart() {
+  hilfeStart(); hudStart(); knopfStart();
+  // Werkzeuge: Tipp wählt, zweiter Tipp auf das aktive Werkzeug öffnet dessen Optionen
+  for (const b of $$('#leiste [data-wz]')) b.addEventListener('click', () => {
+    const w = b.dataset.wz, pop = $('#pop-' + w);
+    if (ST.werkzeug === w || w === 'form') { if (ST.werkzeug !== w) werkzeugSetzen(w); if (pop) popAuf('pop-' + w, b); }
+    else { menuesZu(); werkzeugSetzen(w); }
+  });
+  $('#kn-undo').addEventListener('click', rueckgaengig); $('#kn-redo').addEventListener('click', wiederholen);
+  $('#kn-dar').addEventListener('click', (e) => popAuf('pop-dar', e.currentTarget));
+  $('#kn-mehr').addEventListener('click', (e) => popAuf('pop-mehr', e.currentTarget));
+  $('#kn-zahn').addEventListener('click', () => { menuesZu(); $('#panel').classList.toggle('zu'); });
+  $('#kn-panel-zu').addEventListener('click', () => $('#panel').classList.add('zu'));
+  $('#panel-tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    for (const x of $('#panel-tabs').children) x.classList.toggle('an', x === b);
+    $('#tab-skizze').hidden = b.dataset.tab !== 'skizze'; $('#tab-app').hidden = b.dataset.tab !== 'app';
+  });
+  // generische Bindungen
+  for (const s of $$('.seg[data-ziel]')) s.addEventListener('click', (e) => { const b = e.target.closest('button[data-w]'); if (b) wertSetzen(s.dataset.ziel, b.dataset.w); });
+  for (const c of $$('input[type=checkbox][data-ziel]')) c.addEventListener('change', () => wertSetzen(c.dataset.ziel, c.checked));
+  for (const r of $$('input[type=range][data-ziel]')) r.addEventListener('input', () => wertSetzen(r.dataset.ziel, parseFloat(r.value)));
+  for (const n of $$('input[type=number][data-ziel]')) n.addEventListener('change', () => { const v = parseFloat(n.value.replace(',', '.')); if (v > 0) wertSetzen(n.dataset.ziel, v); else uiSync(); });
+  // Darstellung
+  $('#modus-liste').addEventListener('click', (e) => { const b = e.target.closest('[data-modus]'); if (b) wertSetzen('st.modus', b.dataset.modus); });
+  $('#r-tempo').addEventListener('input', (e) => { ST.tempo = Math.pow(4, parseFloat(e.target.value)); uiSync(); });
+  $('#kn-pause').addEventListener('click', pauseUmschalten);
+  $('#kn-reset').addEventListener('click', () => { stroemungReset(); toast('Strömung zurückgesetzt', 1200); });
+  // Geschwindigkeit: Regler logarithmisch (0,1 … 200 m/s), Zahlenfeld in der gewählten Einheit
+  $('#r-U').addEventListener('input', (e) => wertSetzen('dok.U', +Math.pow(10, parseFloat(e.target.value)).toPrecision(2)));
+  $('#n-U').addEventListener('change', (e) => { const v = parseFloat(e.target.value.replace(',', '.')) / vFaktor(); if (v > 0) wertSetzen('dok.U', klemme(v, 0.001, 1000)); else uiSync(); });
+  // Werkzeuggrößen
+  $('#r-strich').addEventListener('input', (e) => { DOK.strich = logWert(parseFloat(e.target.value), strichMin(), strichMax()); speichernGeplant(); uiSync(); });
+  $('#r-rad').addEventListener('input', (e) => { DOK.radGr = logWert(parseFloat(e.target.value), strichMin(), strichMax() * 2); speichernGeplant(); uiSync(); });
+  // Blattgröße
+  const blatt = () => {
+    const f = EINHEIT_M[$('#s-einheit').value], b = parseFloat($('#n-breite').value.replace(',', '.')) * f, h = parseFloat($('#n-hoehe').value.replace(',', '.')) * f;
+    if (!(b > 0 && h > 0) || b / h > 20 || h / b > 20) { toast('Blattgröße ungültig (Seitenverhältnis höchstens 20:1)'); uiSync(); return; }
+    DOK.breite = b; DOK.hoehe = h; DOK.einheit = $('#s-einheit').value;
+    simAufbauen(); ansichtEinpassen(); speichernGeplant(); uiSync();
+  };
+  $('#n-breite').addEventListener('change', blatt); $('#n-hoehe').addEventListener('change', blatt);
+  $('#s-einheit').addEventListener('change', () => {       // Einheit wechseln: Größe bleibt, Zahlen werden umgerechnet
+    DOK.einheit = $('#s-einheit').value; speichernGeplant(); uiSync();
+  });
+  $('#kn-knopf-reset').addEventListener('click', () => { APP.knopf = null; appSpeichern(); knopfPlatzieren(); toast('Umschaltknopf zurückgesetzt', 1200); });
+  // „…“-Menü
+  $('#mehr-liste').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-akt]'); if (!b) return;
+    menuesZu(); mehrAktion(b.dataset.akt);
+  });
+  // Tipp neben ein Menü schließt es
+  document.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest) return;
+    if (!e.target.closest('.pop') && !e.target.closest('#leiste') && !e.target.closest('.hq')) {
+      if (!$('#pop-form').hidden) popFormZeit = performance.now();        // merken: das Formen-Menü wurde durch diesen Tipp geschlossen
+      for (const p of $$('.pop')) p.hidden = true;
+    }
+  }, true);
+}
+function mehrAktion(a) {
+  if (a === 'einpassen') ansichtEinpassen();
+  else if (a === 'leeren') { if (DOK.objekte.length) { merke(); DOK.objekte = []; ST.auswahl.clear(); geaendert(); toast('Alles gelöscht – Rückgängig holt es zurück'); } }
+  else if (typeof mehrAktionExtra === 'function') mehrAktionExtra(a);
+}
+/* =====================================================================
+   10  DOKUMENTE – IndexedDB, Startseite, Dialoge, Export/Import
+   Datensatz: { id, name, zeit, bild (Vorschau als Data-URL), dok (das Dokument) }
+   ===================================================================== */
+const DB = { db: null, ok: false, mem: new Map() };          // mem = Ersatz, falls IndexedDB nicht verfügbar ist
+let startseiteOffen = false, speicherTimer = 0, aktBild = '';
+const VORLAGEN = [
+  ['Windkanal 2 m × 1 m', 2, 1, 'm'], ['Flügelprofil 1 m × 50 cm', 100, 50, 'cm'], ['Modellauto 40 cm × 20 cm', 40, 20, 'cm'],
+  ['Auto 10 m × 4 m', 10, 4, 'm'], ['A4 quer 297 mm × 210 mm', 297, 210, 'mm'], ['Eigene Größe', 0, 0, ''],
+];
+
+function dbOeffnen() {
+  return new Promise((fertig) => {
+    try {
+      const r = indexedDB.open('windkanal', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('skizzen', { keyPath: 'id' });
+      r.onsuccess = () => { DB.db = r.result; DB.ok = true; fertig(); };
+      r.onerror = r.onblocked = () => fertig();
+    } catch (e) { fertig(); }
+  });
+}
+function dbAnfrage(modus, fn) {                               // eine Anfrage an den Speicher, als Promise
+  return new Promise((fertig, fehler) => {
+    try { const r = fn(DB.db.transaction('skizzen', modus).objectStore('skizzen')); r.onsuccess = () => fertig(r.result); r.onerror = () => fehler(r.error); }
+    catch (e) { fehler(e); }
+  });
+}
+const kopie = (x) => JSON.parse(JSON.stringify(x));
+const dbAlle = () => (DB.ok ? dbAnfrage('readonly', (s) => s.getAll()) : Promise.resolve(Array.from(DB.mem.values())));
+const dbLesen = (id) => (DB.ok ? dbAnfrage('readonly', (s) => s.get(id)) : Promise.resolve(DB.mem.get(id)));
+const dbSchreiben = (e) => (DB.ok ? dbAnfrage('readwrite', (s) => s.put(e)) : Promise.resolve(DB.mem.set(e.id, kopie(e))));
+const dbLoeschen = (id) => (DB.ok ? dbAnfrage('readwrite', (s) => s.delete(id)) : Promise.resolve(DB.mem.delete(id)));
+
+/* ---------- Automatisches Speichern ---------- */
+function speichernGeplant() { clearTimeout(speicherTimer); speicherTimer = setTimeout(() => speichern(false), 700); }
+function speichern(mitBild) {
+  clearTimeout(speicherTimer);
+  if (startseiteOffen) return Promise.resolve();
+  DOK.zeit = Date.now();
+  if (mitBild) { try { aktBild = vorschauBild(); } catch (e) {} }
+  return dbSchreiben({ id: DOK.id, name: DOK.name, zeit: DOK.zeit, bild: aktBild, dok: DOK }).catch(() => toast('Speichern fehlgeschlagen – bitte die Skizze exportieren', 4000));
+}
+// Vorschaubild: ganzes Blatt mit Strömung und Objekten
+function vorschauBild() {
+  const alt = Object.assign({}, ST.ansicht);
+  ansichtEinpassen(); darstellen(0, 0); ovZeichnen();
+  const a = ST.ansicht, c = document.createElement('canvas'), x = c.getContext('2d');
+  const bw = DOK.breite * a.k, bh = DOK.hoehe * a.k, f = Math.min(400 / bw, 250 / bh);
+  c.width = Math.round(bw * f); c.height = Math.round(bh * f);
+  x.drawImage(glc, a.ox * D.dpr, a.oy * D.dpr, bw * D.dpr, bh * D.dpr, 0, 0, c.width, c.height);
+  x.drawImage(ov, a.ox * ovDpr, a.oy * ovDpr, bw * ovDpr, bh * ovDpr, 0, 0, c.width, c.height);
+  Object.assign(ST.ansicht, alt); D.vorAnsicht = null; ovAlt = true;
+  return c.toDataURL('image/jpeg', 0.72);
+}
+
+/* ---------- Dialoge (eigene, weil alert/confirm/prompt in eingebetteten Seiten gesperrt sind) ---------- */
+function dialog(titel, inhaltHtml, okText, beiOk) {
+  const d = $('#dialog');
+  d.innerHTML = '<div class="karte glas"><h3></h3><div class="koerper">' + inhaltHtml + '</div><div class="knoepfe"><button class="taste" data-d="nein">' + (okText ? 'Abbrechen' : 'Schließen') + '</button>' +
+    (okText ? '<button class="taste haupt" data-d="ja">' + okText + '</button>' : '') + '</div></div>';
+  d.querySelector('h3').textContent = titel; d.hidden = false;
+  for (const s of d.querySelectorAll('.seg[data-wahl]')) s.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) for (const x of s.children) x.classList.toggle('an', x === b); });
+  d.onclick = (e) => {
+    const b = e.target.closest('[data-d]');
+    if (b && b.dataset.d === 'ja') { if (beiOk(d) !== false) d.hidden = true; }
+    else if ((b && b.dataset.d === 'nein') || e.target === d) d.hidden = true;
+  };
+  const feld = d.querySelector('input[type=text]'); if (feld) setTimeout(() => { feld.focus(); feld.select(); }, 50);
+  return d;
+}
+const wahl = (d, name) => { const b = d.querySelector('.seg[data-wahl="' + name + '"] .an'); return b ? b.dataset.w : null; };
+const escHtml = (t) => String(t).replace(/[&<>"]/g, (z) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[z]);
+const zahlAus = (el) => parseFloat(String(el.value).replace(',', '.'));
+
+/* ---------- Dialog „Neue Skizze“ ---------- */
+function neueSkizzeDialog() {
+  const d = dialog('Neue Skizze',
+    '<div class="zeile"><span class="lb">Name</span>' + hq('d_name') + '<input type="text" id="d-name" maxlength="60" value="Skizze" style="flex:1"></div>' +
+    '<div class="zeile block"><span class="lb">Blattgröße</span>' + hq('blatt') + '<span class="fuell"></span><select id="d-vorlage" style="max-width:230px">' + VORLAGEN.map((v, i) => '<option value="' + i + '">' + v[0] + '</option>').join('') + '</select></div>' +
+    '<div class="zeile"><span class="fuell"></span><input type="number" id="d-b" class="zahl" value="2" step="any" inputmode="decimal"><span class="klein">×</span><input type="number" id="d-h" class="zahl" value="1" step="any" inputmode="decimal">' +
+    '<select id="d-e"><option>mm</option><option>cm</option><option selected>m</option></select></div>' +
+    '<div class="zeile block"><span class="lb">Anströmseite</span>' + hq('seite') + '<div class="seg" data-wahl="seite"><button data-w="links" class="an">Links</button><button data-w="rechts">Rechts</button><button data-w="oben">Oben</button><button data-w="unten">Unten</button></div></div>' +
+    '<div class="zeile"><span class="lb">Geschwindigkeit</span>' + hq('geschwindigkeit') + '<span class="fuell"></span><input type="number" id="d-u" class="zahl" value="' + +(10 * vFaktor()).toPrecision(3) + '" step="any" inputmode="decimal"><span class="klein">' + APP.vEinheit + '</span></div>' +
+    '<details><summary>Erweitert</summary>' +
+    '<div class="zeile block"><span class="lb">Medium</span>' + hq('medium') + '<div class="seg" data-wahl="medium"><button data-w="luft" class="an">Luft 20 °C</button><button data-w="wasser">Wasser 20 °C</button></div></div>' +
+    '<div class="zeile block"><span class="lb">Qualität</span>' + hq('qualitaet') + '<div class="seg" data-wahl="qual">' + ['niedrig', 'mittel', 'hoch'].map((q) => '<button data-w="' + q + '"' + (q === APP.stdQual ? ' class="an"' : '') + '>' + QUAL[q].name + '</button>').join('') + '</div></div>' +
+    '</details>',
+    'Anlegen', (d) => {
+      const f = EINHEIT_M[d.querySelector('#d-e').value], b = zahlAus(d.querySelector('#d-b')) * f, h = zahlAus(d.querySelector('#d-h')) * f, u = zahlAus(d.querySelector('#d-u')) / vFaktor();
+      if (!(b > 0 && h > 0) || b / h > 20 || h / b > 20) { toast('Blattgröße ungültig (Seitenverhältnis höchstens 20:1)'); return false; }
+      if (!(u > 0)) { toast('Bitte eine Geschwindigkeit größer als 0 eingeben'); return false; }
+      dokOeffnen(neuesDok({ name: d.querySelector('#d-name').value.trim() || 'Skizze', breite: b, hoehe: h, einheit: d.querySelector('#d-e').value,
+        seite: wahl(d, 'seite'), U: u, medium: wahl(d, 'medium'), qualitaet: wahl(d, 'qual') }), '');
+      speichern(false);
+    });
+  d.querySelector('#d-vorlage').addEventListener('change', (e) => {
+    const v = VORLAGEN[+e.target.value]; if (!v[1]) return;
+    d.querySelector('#d-b').value = v[1]; d.querySelector('#d-h').value = v[2]; d.querySelector('#d-e').value = v[3];
+  });
+  for (const id of ['#d-b', '#d-h', '#d-e']) d.querySelector(id).addEventListener('input', () => (d.querySelector('#d-vorlage').value = VORLAGEN.length - 1));
+}
+
+/* ---------- Startseite ---------- */
+async function startseiteZeigen() {
+  const s = $('#start');
+  startseiteOffen = true; s.hidden = false; menuesZu(); $('#panel').classList.add('zu');
+  let liste = []; try { liste = await dbAlle(); } catch (e) {}
+  liste.sort((a, b) => b.zeit - a.zeit);
+  s.innerHTML = '<header><h1>FlowSketch<small>2D-Strömung zum Skizzieren</small></h1><span class="fuell"></span>' +
+    '<button class="taste" data-s="import">Importieren</button><button class="taste haupt" data-s="neu">Neue Skizze</button></header>' +
+    (DB.ok ? '' : '<p id="start-hinweis">Der Browser-Speicher ist hier nicht verfügbar. Skizzen bleiben nur erhalten, bis die Seite geschlossen wird – bitte exportieren.</p>') +
+    '<div id="kacheln"><div class="kachel neu" data-s="neu"><div class="bild">+</div><div class="fuss"><div><b>Neue Skizze</b><span>Blatt, Anströmung und Geschwindigkeit wählen</span></div></div></div>' +
+    liste.map((e) => '<div class="kachel" data-id="' + escHtml(e.id) + '"><div class="bild"' + (e.bild ? ' style="background-image:url(' + e.bild + ')"' : '') + '>' + (e.bild ? '' : 'keine Vorschau') + '</div>' +
+      '<div class="fuss"><div><b>' + escHtml(e.name) + '</b><span>' + new Date(e.zeit).toLocaleDateString('de-DE') + ' · ' + fLaenge(e.dok.breite, 3) + ' × ' + fLaenge(e.dok.hoehe, 3) + '</span></div>' +
+      '<button class="kn" data-menue="' + escHtml(e.id) + '" title="Mehr"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button></div></div>').join('') + '</div>';
+}
+function startseiteStart() {
+  $('#kn-start').hidden = false; $('#tr-start').hidden = false;
+  $('#kn-start').addEventListener('click', async () => { if (aktiv) return; if (schwing) schwingEnde(true); await speichern(true); startseiteZeigen(); });
+  $('#start').addEventListener('click', async (e) => {
+    const m = e.target.closest('[data-menue]'), s = e.target.closest('[data-s]'), k = e.target.closest('.kachel[data-id]');
+    if (m) { skizzeMenue(m.dataset.menue); return; }
+    if (s) { if (s.dataset.s === 'neu') neueSkizzeDialog(); else $('#datei-json').click(); return; }
+    if (k) { const eintrag = await dbLesen(k.dataset.id); if (eintrag) dokOeffnen(neuesDok(eintrag.dok), eintrag.bild || ''); }
+  });
+  $('#datei-json').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { await skizzeImportieren(await f.text()); } catch (err) { toast('Import fehlgeschlagen: ' + err.message, 4500); }
+  });
+  // Beim Verlassen der Seite sofort sichern
+  document.addEventListener('visibilitychange', () => { if (document.hidden && !startseiteOffen) speichern(false); });
+  window.addEventListener('pagehide', () => { if (!startseiteOffen) speichern(false); });
+}
+// Menü einer Kachel: Umbenennen, Duplizieren, Exportieren, Löschen
+async function skizzeMenue(id) {
+  const e = await dbLesen(id); if (!e) return;
+  const d = dialog(e.name, '<div class="liste"><button class="eintrag" data-m="name">Umbenennen</button><button class="eintrag" data-m="dup">Duplizieren</button>' +
+    '<button class="eintrag" data-m="exp">Exportieren (.windkanal.json)</button><button class="eintrag" data-m="del" style="color:#ff8f8f">Löschen</button></div>', '', null);
+  d.querySelector('.liste').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-m]'); if (!b) return;
+    const m = b.dataset.m; d.hidden = true;
+    if (m === 'name') dialog('Umbenennen', '<input type="text" id="d-name" maxlength="60" value="' + escHtml(e.name) + '">', 'Speichern', (dd) => {
+      e.name = e.dok.name = dd.querySelector('#d-name').value.trim() || e.name; dbSchreiben(e).then(startseiteZeigen);
+    });
+    else if (m === 'dup') { const k = kopie(e); k.id = k.dok.id = neuesDok().id; k.name = k.dok.name = e.name + ' Kopie'; k.zeit = Date.now(); await dbSchreiben(k); startseiteZeigen(); }
+    else if (m === 'exp') skizzeExportieren(e.dok);
+    else if (m === 'del') dialog('„' + e.name + '“ löschen?', '<p class="klein">Die Skizze wird endgültig von diesem Gerät entfernt.</p>', 'Löschen', () => { dbLoeschen(id).then(startseiteZeigen); });
+  });
+}
+function dokOeffnen(d, bild) {
+  // ältere oder unvollständige Objekte auf den aktuellen Stand bringen
+  d.objekte = (d.objekte || []).filter((o) => o && Array.isArray(o.pts) && o.pts.length).map((o) => Object.assign({ w: 0, zu: false, neg: [], m: [1, 0, 0, 1, 0, 0], art: 'frei' }, o));
+  if (!QUAL[d.qualitaet]) d.qualitaet = 'mittel';
+  DOK = d; aktBild = bild || ''; PROFIL.aktId = null; PROFIL.sehne = 0; ST.pause = false;
+  startseiteOffen = false; $('#start').hidden = true; $('#dialog').hidden = true;
+  if (ST.werkzeug === 'stoss' || ST.werkzeug === 'lasso') ST.werkzeug = 'frei';
+  dokAnzeigen();
+}
+
+/* ---------- Export / Import ---------- */
+// Datei ausgeben: Teilen-Menü (iPad: „In Dateien sichern“), sonst Download; in eingebetteter Ansicht über die Download-Schnittstelle des Rahmens
+async function dateiAusgeben(blob, name, typ) {
+  try {
+    const datei = new File([blob], name, { type: typ });
+    if (navigator.canShare && navigator.canShare({ files: [datei] })) { await navigator.share({ files: [datei], title: name }); return true; }
+  } catch (e) { if (e && e.name === 'AbortError') return false; }
+  try {
+    if (window.claude && typeof window.claude.use === 'function') {
+      const dl = await window.claude.use('downloads');
+      if (dl) { await dl.save({ filename: name, data: blob }); return true; }
+    }
+  } catch (e) { if (e && e.code === 'declined') return false; }
+  try {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+    return true;
+  } catch (e) { return false; }
+}
+const dateiName = (n) => (n || 'Skizze').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'Skizze';
+function skizzeExportieren(dok) {
+  const text = JSON.stringify({ format: 'windkanal', version: VERSION, exportiert: new Date().toISOString(), skizze: dok });
+  dateiAusgeben(new Blob([text], { type: 'application/json' }), dateiName(dok.name) + '.windkanal.json', 'application/json');
+}
+async function skizzeImportieren(text) {
+  let j; try { j = JSON.parse(text); } catch (e) { throw new Error('keine gültige JSON-Datei'); }
+  if (!j || j.format !== 'windkanal' || !j.skizze) throw new Error('keine Windkanal-Skizze');
+  if (j.version > VERSION) throw new Error('Datei stammt aus einer neueren App-Version (' + j.version + ')');
+  const s = j.skizze;
+  if (!(s.breite > 0 && s.hoehe > 0 && s.U > 0)) throw new Error('Blattgröße oder Geschwindigkeit fehlen');
+  const d = neuesDok(Object.assign({}, s, { id: neuesDok().id, zeit: Date.now() }));    // neue ID: nichts wird überschrieben
+  await dbSchreiben({ id: d.id, name: d.name, zeit: d.zeit, bild: '', dok: d });
+  toast('„' + d.name + '“ importiert');
+  if (startseiteOffen) startseiteZeigen();
+}
+/* ---------- PNG der aktuellen Ansicht inklusive HUD-Werten ---------- */
+function bildExportieren() {
+  darstellen(0, 0); ovZeichnen();
+  const c = document.createElement('canvas'), x = c.getContext('2d'), f = D.dpr;
+  c.width = D.W; c.height = D.H;
+  x.drawImage(glc, 0, 0); x.drawImage(ov, 0, 0, c.width, c.height);
+  // HUD-Kasten
+  const s = kraftStatistik(false), z = [DOK.name, fTempo(DOK.U) + ' · ' + MEDIEN[DOK.medium].name + ' · Blatt ' + fLaenge(DOK.breite) + ' × ' + fLaenge(DOK.hoehe)];
+  z.push('Re_phys ' + fRe(SIM.rePhys) + ' · Re_sim ' + fRe(SIM.reSim) + (SIM.gedeckelt ? ' (qualitativ)' : ''));
+  if (s) {
+    z.push('Cd ' + pm(s.cd, s.cdS) + ' · Cl ' + pm(s.cl, s.clS) + ' · Bezug ' + fLaenge(SIM.lref) + (DOK.bezug === 'sehne' ? ' (Sehne)' : ' (Stirnhöhe)'));
+    z.push('Widerstand ' + fKraft(s.cd * s.proM * DOK.tiefe) + ' · Auftrieb ' + fKraft(s.cl * s.proM * DOK.tiefe) + ' bei ' + fLaenge(DOK.tiefe) + ' Tiefe (2D-Rechnung)');
+  }
+  x.setTransform(f, 0, 0, f, 0, 0); x.font = '13px ui-monospace, Menlo, monospace'; x.textBaseline = 'top';
+  const b = Math.max.apply(null, z.map((t) => x.measureText(t).width)) + 24, l = SAFE.l + 40, o = SAFE.o + 14;
+  x.fillStyle = 'rgba(8,11,14,.85)'; x.fillRect(l, o, b, z.length * 19 + 16);
+  z.forEach((t, i) => { x.fillStyle = i ? '#cfdbe0' : '#35e0d0'; x.fillText(t, l + 12, o + 9 + i * 19); });
+  c.toBlob((blob) => { if (blob) dateiAusgeben(blob, dateiName(DOK.name) + '.png', 'image/png'); }, 'image/png');
+}
+
+/* ---------- Start: Speicher öffnen, Startseite oder Beispiel ---------- */
+function beispielObjekte(d) {                                 // ein Kreiszylinder als erstes Hindernis
+  const r = d.hoehe * 0.06, pts = [];
+  for (let i = 0; i < 72; i++) { const a = i / 72 * 2 * Math.PI; pts.push([r * Math.cos(a), r * Math.sin(a)]); }
+  d.objekte.push({ id: d.nid++, art: 'ellipse', pts, w: 0, zu: true, neg: [], m: [1, 0, 0, 1, d.breite * 0.3, d.hoehe * 0.5] });
+}
+async function dokStart() {
+  startseiteStart();
+  await dbOeffnen();
+  let liste = []; try { liste = await dbAlle(); } catch (e) {}
+  if (liste.length) { DOK = neuesDok(); dokAnzeigen(); startseiteZeigen(); }      // vorhandene Skizzen: Startseite
+  else { const d = neuesDok({ name: 'Beispiel: Zylinder' }); beispielObjekte(d); dokOeffnen(d, ''); speichern(false); }   // erster Start: Beispiel
+}
+/* =====================================================================
+   11  HAUPTSCHLEIFE – Zeitschritt-Steuerung und Start
+   ===================================================================== */
+let letzteZeit = 0, dtGlatt = 16.7, fpsAnzeige = 60, schritteAnzeige = 0, schrittRest = 0;
+let decke = Infinity, deckeZeit = -1e9, kraftZeit = 0, hudZeit = 0, bereichTimer = 0;
+const dtListe = [];
+
+function bild(t) {
+  requestAnimationFrame(bild);
+  if (!gl || gl.isContextLost() || startseiteOffen || !L.A) { letzteZeit = t; return; }
+  let dt = t - letzteZeit; letzteZeit = t;
+  if (!(dt > 0)) return;
+  const pause = dt > 250;                                   // App war im Hintergrund
+  if (pause) dt = 16.7;
+  dtGlatt += (dt - dtGlatt) * 0.12; fpsAnzeige = 1000 / dtGlatt;
+  dtListe.push(dt); if (dtListe.length > 90) dtListe.shift();
+  if (schwing) { schwingSchritt(); return; }                // Einschwingen: rechnen ohne Bildaufbau
+  if (stossAkt && (!aktiv || performance.now() - aktiv.t > 120)) stossAkt = null;   // Stift steht still oder ist abgehoben
+  glGroesse();
+  if (maskeAlt) maskeZeichnen();
+  // Bezugslängen messen: kurz nach der letzten Änderung, beim Zeichnen höchstens alle 0,6 s
+  if (geoAlt && t - geoZeit > (aktiv ? 600 : 150)) geometrieMessen();
+  kraftAbholen();
+
+  /* Adaptive Schrittzahl: so viele Simulationsschritte pro Bild, wie die Bildrate (mind. 60 fps) zulässt.
+     Die GPU arbeitet asynchron, deshalb dient die gemessene Bildzeit als Maß für die Auslastung. */
+  let n = 0;
+  if (!ST.pause) {
+    const periode = Math.min.apply(null, dtListe), ziel = Math.max(periode, 1000 / 60);
+    if (!pause && dtGlatt > ziel * 1.18 && dt > ziel * 1.18) { SIM.proBild = Math.max(1, SIM.proBild * 0.9); decke = SIM.proBild; deckeZeit = t; }
+    else if (dtGlatt < ziel * 1.06) SIM.proBild = Math.min(SIM.proBild + 0.08, t - deckeZeit < 6000 ? decke : 80, 80);
+    schrittRest += Math.min(SIM.proBild, SCHRITTE_PRO_S * dt / 1000);
+    n = Math.floor(schrittRest); schrittRest -= n;
+    loeserSchritte(n);
+    schritteAnzeige += (n - schritteAnzeige) * 0.1;
+    if (t - kraftZeit > 120) { kraftZeit = t; kraftMessen(); }   // Kräfte etwa 8-mal pro Sekunde
+  }
+  darstellen(dt / 1000, n);
+  if (ovAlt) ovZeichnen();
+  if (t - hudZeit > 250) { hudZeit = t; hudAktualisieren(); }
+}
+
+// Simulationsbereich "Ausschnitt": nach Pan/Zoom kurz warten, dann neu initialisieren
+function bereichGeplant() {
+  clearTimeout(bereichTimer);
+  bereichTimer = setTimeout(() => { simAufbauen(); toast('Simulationsbereich neu initialisiert', 1400); }, 450);
+}
+// Ein Dokument in die Arbeitsfläche laden
+function dokAnzeigen() {
+  UNDO.length = REDO.length = 0; ST.auswahl.clear(); aktiv = null; SIM.nuMin = NU_MIN;
+  ansichtEinpassen(); simAufbauen(); ansichtEinpassen(); uiSync();
+}
+
+// Symbol für den Home-Bildschirm zur Laufzeit zeichnen (die Datei soll ohne Zusatzdateien auskommen)
+function symbolSetzen() {
+  if (document.querySelector('link[rel="apple-touch-icon"]')) return;   // statisches Symbol vorhanden (GitHub-Pages-Version)
+  try {
+    const c = document.createElement('canvas'), x = c.getContext('2d'); c.width = c.height = 180;
+    x.fillStyle = '#05080b'; x.fillRect(0, 0, 180, 180);
+    x.lineWidth = 7; x.lineCap = 'round';
+    [['#0a6fb4', 50], ['#17cfe6', 78], ['#4dffb4', 106], ['#17cfe6', 134]].forEach(([f, y], i) => {
+      x.strokeStyle = f; x.beginPath(); x.moveTo(26, y);
+      x.bezierCurveTo(70, y, 70, y + (i < 2 ? -22 : 22) * (i === 1 || i === 2 ? 1 : 0.4), 96, y + (i < 2 ? -22 : 22) * (i === 1 || i === 2 ? 1 : 0.4));
+      x.bezierCurveTo(124, y + (i < 2 ? -22 : 22) * (i === 1 || i === 2 ? 1 : 0.4), 124, y, 156, y); x.stroke();
+    });
+    x.fillStyle = '#d3dde2'; x.beginPath(); x.arc(96, 92, 15, 0, 6.2832); x.fill();
+    const l = document.createElement('link'); l.rel = 'apple-touch-icon'; l.href = c.toDataURL('image/png'); document.head.append(l);
+  } catch (e) {}
+}
+function start() {
+  appLaden(); safeLesen(); ST.radModus = APP.radModus === 'strich' ? 'strich' : 'praezise';
+  symbolSetzen();
+  if (!glStart()) return;
+  darstellungStart(); glGroesse();
+  uiStart(); extraStart(); knopfPlatzieren();
+  dokStart();
+  window.addEventListener('resize', () => { safeLesen(); knopfPlatzieren(); ansichtGeaendert(); menuesZu(); });
+  // Kontextverlust (z. B. App lange im Hintergrund): alles neu anlegen
+  glc.addEventListener('webglcontextlost', (e) => e.preventDefault());
+  glc.addEventListener('webglcontextrestored', () => {
+    L.maskeT = null; L.alt = []; L.sync = null; L.A = null; D.schweif = []; D.rauch = []; D.W = 0;
+    if (!glStart()) return;
+    darstellungStart(); glGroesse(); simAufbauen();
+  });
+  requestAnimationFrame(bild);
+}
+start();
+// Offline-Betrieb: Service Worker (nur bei Auslieferung über https, z. B. GitHub Pages)
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
